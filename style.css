@@ -24,7 +24,7 @@
 
 #jsi_settings_block input[type="text"]{
   flex: 1;
-  min-width: 320px;
+  min-width: 340px;
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid rgba(120,140,200,.25);
@@ -34,14 +34,14 @@
 
 #jsi_settings_block .jsi_help {
   font-size: 11px;
-  opacity: .75;
+  opacity: .78;
   margin-top: 6px;
   line-height: 1.35;
 }
 
 #jsi_settings_block .jsi_status {
   font-size: 11px;
-  opacity: .9;
+  opacity: .95;
   margin-top: 6px;
   white-space: pre-wrap;
 }
@@ -56,9 +56,21 @@
 #jsi_settings_block .jsi_warn {
   margin-top: 6px;
   font-size: 11px;
-  opacity: .85;
+  opacity: .9;
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid rgba(240,190,60,.25);
   background: rgba(240,190,60,.08);
+}
+
+#jsi_settings_block .jsi_btnrow {
+  display:flex;
+  gap:8px;
+  margin-top:6px;
+  flex-wrap:wrap;
+}
+
+#jsi_settings_block .jsi_btnrow .menu_button {
+  padding: 4px 10px;
+  font-size: 12px;
 }
