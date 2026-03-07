@@ -1,1 +1,15 @@
-
+{
+  "display_name": "Чёрный рынок",
+  "loading_order": 57,
+  "js": [
+    "index.js"
+  ],
+  "css": [
+    "style.css"
+  ],
+  "author": "Smokshi",
+  "version": "1.0.0",
+  "auto_update": true,
+  "homepage": "https://github.com/smoksshit-cmd/SillyTavern-BlackMarketShop",
+  "requires": []
+}
