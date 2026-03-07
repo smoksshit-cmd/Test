@@ -571,12 +571,15 @@
   padding: 1px 7px;
 }
 
+.bms-apply-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .bms-apply-btn {
   padding: 5px 9px;
   border-radius: 7px;
-  border: 1px solid rgba(245,166,35,0.45);
-  background: rgba(245,166,35,0.12);
-  color: #f5a623;
   cursor: pointer;
   font-size: 11px;
   font-weight: 700;
@@ -584,10 +587,28 @@
   transition: all 0.13s;
 }
 
-.bms-apply-btn:hover {
+.bms-apply-char {
+  border: 1px solid rgba(245,166,35,0.45);
+  background: rgba(245,166,35,0.12);
+  color: #f5a623;
+}
+
+.bms-apply-char:hover {
   background: rgba(245,166,35,0.22);
   border-color: rgba(245,166,35,0.7);
   color: #ffc040;
+}
+
+.bms-apply-user {
+  border: 1px solid rgba(100,160,255,0.35);
+  background: rgba(80,120,220,0.1);
+  color: #7aa8f8;
+}
+
+.bms-apply-user:hover {
+  background: rgba(80,120,220,0.22);
+  border-color: rgba(100,160,255,0.6);
+  color: #a0c0ff;
 }
 
 .bms-discard-btn {
