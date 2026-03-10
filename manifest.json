@@ -1,11 +1,11 @@
 {
-  "display_name": "Emotion Canvas",
-  "loading_order": 57,
-  "js": ["index.js"],
+  "display_name": "Living Soul",
+  "loading_order": 58,
+  "js":  ["index.js"],
   "css": ["style.css"],
-  "author": "EmotionCanvas",
+  "author": "Smokshi",
   "version": "1.0.0",
-  "auto_update": false,
-  "homepage": "",
+  "auto_update": true,
+  "homepage": "https://github.com/smoksshit-cmd/SillyTavern-LivingSoul",
   "requires": []
 }
