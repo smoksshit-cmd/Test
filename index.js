@@ -1,1088 +1,542 @@
 /**
- * LIVING SOUL — SillyTavern Extension
+ * Living Soul — SillyTavern Extension
  * v1.0.0
  *
  * Живые эмоции {{char}} в реальном времени.
- * Радар из 8 осей · Тайные мысли · График настроения · Триггеры поведения
+ * Радар из 8 осей · Тайные мысли · График истории · Триггеры поведения
  */
 
 (() => {
   'use strict';
 
-  const MODULE_KEY    = 'living_soul';
-  const BEHAVIOR_TAG  = 'LSL_BEHAVIOR';
-  const FAB_POS_KEY   = 'lsl_fab_v1';
-  const FAB_MARGIN    = 8;
-  const EXT_PROMPT_TYPES = Object.freeze({ IN_PROMPT: 0, IN_CHAT: 1, BEFORE_PROMPT: 2 });
+  const MODULE_KEY  = 'living_soul';
+  const SOUL_TAG    = 'LS_SOUL';
+  const FAB_POS_KEY = 'ls_fab_v1';
+  const FAB_MARGIN  = 8;
+  const API_MODEL   = 'claude-sonnet-4-20250514';
+  const MAX_HISTORY = 60;
 
-  // ── Emotion definitions ───────────────────────────────────────────────────
+  const EMOTIONS = [
+    { id: 'fear',    name: 'Страх',      icon: '😨', color: '#9966ff' },
+    { id: 'love',    name: 'Любовь',     icon: '❤️',  color: '#ff4488' },
+    { id: 'anger',   name: 'Злость',     icon: '😡', color: '#ff3322' },
+    { id: 'trust',   name: 'Доверие',    icon: '🤝', color: '#22cc88' },
+    { id: 'disgust', name: 'Отвращение', icon: '🤢', color: '#aacc22' },
+    { id: 'joy',     name: 'Радость',    icon: '✨', color: '#ffcc22' },
+    { id: 'sadness', name: 'Тоска',      icon: '🌧️', color: '#4499dd' },
+    { id: 'desire',  name: 'Желание',    icon: '🔥', color: '#ff7722' },
+  ];
+  const EMOTION_MAP = Object.fromEntries(EMOTIONS.map(e => [e.id, e]));
 
-  const EMOTIONS = Object.freeze({
-    love:        { label: 'Любовь',       icon: '❤️',  color: '#ff4d7d', axis: 0 },
-    joy:         { label: 'Радость',      icon: '✨',  color: '#ffd700', axis: 1 },
-    trust:       { label: 'Доверие',      icon: '🤝',  color: '#00e5b0', axis: 2 },
-    anticipation:{ label: 'Предвкушение', icon: '🌀',  color: '#ff9f43', axis: 3 },
-    fear:        { label: 'Страх',        icon: '🌑',  color: '#7f8fff', axis: 4 },
-    sadness:     { label: 'Грусть',       icon: '💧',  color: '#6eb5ff', axis: 5 },
-    disgust:     { label: 'Отвращение',   icon: '🌿',  color: '#a8e063', axis: 6 },
-    anger:       { label: 'Злость',       icon: '🔥',  color: '#ff4500', axis: 7 },
-  });
+  const TRIGGERS = [
+    { id: 'fear_spike',   emotion: 'fear',    threshold: 75, dir: 'above', name: '😨 Паника',
+      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}}: охвачен(а) паникой и страхом. Движения нервные, голос дрожит. {{char}} избегает прямого взгляда, может резко отстраниться. Страх диктует каждое слово в этой сцене.' },
+    { id: 'love_deep',    emotion: 'love',    threshold: 82, dir: 'above', name: '❤️ Влюблённость',
+      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}}: глубоко влюблён(а) в {{user}}. Каждое движение {{user}} замечается. {{char}} с трудом скрывает нежность — она прорывается в голосе, взгляде, случайных прикосновениях.' },
+    { id: 'anger_rage',   emotion: 'anger',   threshold: 78, dir: 'above', name: '😡 Ярость',
+      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}}: на грани взрыва. Злость кипит внутри. Речь стала резкой и обрывистой. {{char}} может сорваться в любой момент.' },
+    { id: 'trust_none',   emotion: 'trust',   threshold: 15, dir: 'below', name: '🔒 Недоверие',
+      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}}: полностью не доверяет {{user}}. Анализирует каждое слово. Отвечает уклончиво, держит дистанцию.' },
+    { id: 'desire_hot',   emotion: 'desire',  threshold: 80, dir: 'above', name: '🔥 Влечение',
+      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}}: сильное физическое влечение к {{user}} мешает сосредоточиться. Взгляд задерживается чуть дольше, голос становится тише и глубже.' },
+    { id: 'sadness_abyss',emotion: 'sadness', threshold: 80, dir: 'above', name: '🌧️ Отчаяние',
+      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}}: погружён(а) в глубокую тоску. Слова даются тяжело. {{char}} может умолкать на полуслове. Внутри — ощущение пустоты.' },
+    { id: 'joy_euphoria', emotion: 'joy',     threshold: 88, dir: 'above', name: '✨ Эйфория',
+      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}}: переполнен(а) радостью. Движения лёгкие, речь быстрее. {{char}} может засмеяться без причины или сделать что-то спонтанное.' },
+    { id: 'disgust_rep',  emotion: 'disgust', threshold: 75, dir: 'above', name: '🤢 Отвержение',
+      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}}: испытывает сильное отвращение. Слова выбираются с едкой точностью. {{char}} хочет прекратить взаимодействие.' },
+  ];
 
-  const EMOTION_KEYS = Object.keys(EMOTIONS);
+  let panelOpen    = false;
+  let activeTab    = 'radar';
+  let analyzing    = false;
+  let lastFabDragTs= 0;
+  let activeTriggerIds = new Set();
+  let _cachedEmotions  = null;
 
-  // ── Behavior triggers ─────────────────────────────────────────────────────
-
-  const BEHAVIOR_TRIGGERS = Object.freeze({
-    love: {
-      threshold: 75,
-      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}} [скрыто от {{user}}]: {{char}} охвачен глубокой любовью. Каждое действие {{user}} воспринимается через призму этого чувства. {{char}} с трудом скрывает нежность — голос теплее, взгляд задерживается дольше обычного, случайные прикосновения кажутся значимыми. Это переполняет изнутри.',
-    },
-    joy: {
-      threshold: 80,
-      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}} [скрыто]: {{char}} переполнен радостью — искренней, почти детской. Трудно сохранять серьёзность, всё кажется чуть светлее. Энергия ищет выход.',
-    },
-    trust: {
-      threshold: 80,
-      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}} [скрыто]: {{char}} испытывает глубокое доверие к {{user}}. Защитные барьеры опущены. {{char}} готов сказать то, что обычно не говорит никому.',
-    },
-    anticipation: {
-      threshold: 75,
-      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}} [скрыто]: {{char}} на взводе от предвкушения — мысли забегают вперёд, тело чуть напряжено, ждёт каждого следующего слова {{user}}.',
-    },
-    fear: {
-      threshold: 70,
-      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}} [скрыто]: {{char}} охвачен страхом. Инстинкты говорят — опасность. Дыхание участилось, каждое движение {{user}} анализируется. {{char}} ищет выход или спасение, скрывая панику за внешним спокойствием.',
-    },
-    sadness: {
-      threshold: 75,
-      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}} [скрыто]: {{char}} несёт тяжёлую грусть. Слова даются труднее, паузы длиннее. Что-то внутри сжалось и не отпускает.',
-    },
-    disgust: {
-      threshold: 70,
-      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}} [скрыто]: {{char}} испытывает сильное отвращение. Каждая реакция слегка сдержана — внутри желание отстраниться, хотя {{char}} этого не показывает напрямую.',
-    },
-    anger: {
-      threshold: 70,
-      prompt: 'ВНУТРЕННЕЕ СОСТОЯНИЕ {{char}} [скрыто]: {{char}} кипит от злости. Под поверхностью — вулкан. Слова выбираются с усилием чтобы не сорваться. Одно неверное слово {{user}} может сломать этот контроль.',
-    },
-  });
-
-  // ── Default settings ──────────────────────────────────────────────────────
-
-  const defaultSettings = Object.freeze({
-    enabled:          true,
-    showFab:          true,
-    autoAnalyze:      true,
-    analyzeEvery:     1,
-    injectBehavior:   true,
-    showInnerThought: true,
-    fabScale:         0.9,
-    apiEndpoint:      '',
-    apiKey:           '',
-    apiModel:         'gpt-4o-mini',
-    collapsed:        false,
-    scanDepth:        8,
-  });
-
-  // ── Runtime ───────────────────────────────────────────────────────────────
-
-  let panelOpen      = false;
-  let analyzing      = false;
-  let lastFabDragTs  = 0;
-  let msgCounter     = 0;
-  let activeTab      = 'radar';
-  let behaviorActive = false;
-
-  // ── ST helpers ────────────────────────────────────────────────────────────
-
-  function ctx() { return SillyTavern.getContext(); }
-
-  function getSettings() {
-    const { extensionSettings } = ctx();
-    if (!extensionSettings[MODULE_KEY])
-      extensionSettings[MODULE_KEY] = structuredClone(defaultSettings);
-    for (const k of Object.keys(defaultSettings))
-      if (!Object.hasOwn(extensionSettings[MODULE_KEY], k))
-        extensionSettings[MODULE_KEY][k] = defaultSettings[k];
-    return extensionSettings[MODULE_KEY];
-  }
-
-  // ── Per-chat state ────────────────────────────────────────────────────────
-
-  function chatKey() {
-    const c = ctx();
-    const chatId = (typeof c.getCurrentChatId === 'function' ? c.getCurrentChatId() : null) || c.chatId || 'unknown';
-    const charId = c.characterId ?? c.groupId ?? 'unknown';
-    return `lsl_v1__${charId}__${chatId}`;
-  }
-
-  function emptyEmotions() {
-    const e = {};
-    for (const k of EMOTION_KEYS) e[k] = 20;
-    return e;
-  }
-
-  function emptyState() {
-    return {
-      emotions:     emptyEmotions(),
-      history:      [],   // [{msgIdx, emotions, ts}]
-      thoughts:     [],   // [{text, ts, msgIdx, dominant}]
-      lastAnalyzed: 0,
-    };
-  }
-
-  async function getState(create = false) {
-    const key = chatKey();
-    if (!ctx().chatMetadata[key]) {
-      if (create) {
-        ctx().chatMetadata[key] = emptyState();
-        await ctx().saveMetadata();
-      } else {
-        return emptyState();
-      }
-    }
-    const s = ctx().chatMetadata[key];
-    if (!s.emotions)  s.emotions  = emptyEmotions();
-    if (!s.history)   s.history   = [];
-    if (!s.thoughts)  s.thoughts  = [];
-    if (!s.lastAnalyzed) s.lastAnalyzed = 0;
-    for (const k of EMOTION_KEYS)
-      if (typeof s.emotions[k] !== 'number') s.emotions[k] = 20;
-    return s;
-  }
-
-  async function saveState() { await ctx().saveMetadata(); }
-
-  // ── Utils ─────────────────────────────────────────────────────────────────
-
-  function escHtml(s) {
-    return String(s)
-      .replaceAll('&','&amp;').replaceAll('<','&lt;')
-      .replaceAll('>','&gt;').replaceAll('"','&quot;');
-  }
-
-  function clamp(v, mn, mx) { return Math.max(mn, Math.min(mx, v)); }
-  function vpW() { return window.visualViewport?.width  || window.innerWidth; }
-  function vpH() { return window.visualViewport?.height || window.innerHeight; }
-
-  function getDominant(emotions) {
-    let best = EMOTION_KEYS[0], bestVal = 0;
-    for (const k of EMOTION_KEYS)
-      if ((emotions[k] || 0) > bestVal) { bestVal = emotions[k]; best = k; }
+  function ctx()  { return SillyTavern.getContext(); }
+  function vpW()  { return window.visualViewport?.width  || window.innerWidth;  }
+  function vpH()  { return window.visualViewport?.height || window.innerHeight; }
+  function clamp(v,mn,mx){ return Math.max(mn,Math.min(mx,v)); }
+  function escHtml(s){ return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;'); }
+  function getDominantEmotion(emotions){
+    let best=EMOTIONS[0],bestVal=0;
+    for(const e of EMOTIONS){ const v=emotions[e.id]||0; if(v>bestVal){bestVal=v;best=e;} }
     return best;
   }
 
-  function getCharName() {
-    const c = ctx();
-    try {
-      if (c.characterId !== undefined && c.characters?.[c.characterId]?.name)
-        return c.characters[c.characterId].name;
-      if (c.groupId !== undefined)
-        return c.groups?.find?.(g => g.id === c.groupId)?.name ?? '{{char}}';
-    } catch {}
-    return '{{char}}';
+  function getSettings(){
+    const c=ctx();
+    if(!c.extensionSettings[MODULE_KEY]) c.extensionSettings[MODULE_KEY]={};
+    const s=c.extensionSettings[MODULE_KEY];
+    if(s.enabled         ===undefined) s.enabled         =true;
+    if(s.showFab         ===undefined) s.showFab         =true;
+    if(s.apiEnabled      ===undefined) s.apiEnabled      =true;
+    if(s.triggersEnabled ===undefined) s.triggersEnabled =true;
+    if(s.showThoughtBubble===undefined)s.showThoughtBubble=true;
+    if(s.decayEnabled    ===undefined) s.decayEnabled    =true;
+    if(s.decayRate       ===undefined) s.decayRate       =3;
+    return s;
   }
 
-  function getLastMessages(n) {
-    const { chat } = ctx();
-    if (!Array.isArray(chat) || !chat.length) return '';
-    return chat.slice(-n)
-      .filter(m => m && !m.is_system && (m.mes || '').trim())
-      .map(m => `${m.is_user ? '{{user}}' : (m.name || '{{char}}')}: ${(m.mes||'').trim()}`)
-      .join('\n\n');
+  function chatKey(){
+    const c=ctx();
+    const charId=c.characterId??'unknown';
+    const chatId=c.getCurrentChatId?.()??'default';
+    return `ls_v1__${charId}__${chatId}`;
   }
 
-  // ── AI layer ──────────────────────────────────────────────────────────────
-
-  function getBaseUrl() {
-    return (getSettings().apiEndpoint || '').trim()
-      .replace(/\/+$/, '').replace(/\/(chat\/completions|completions)$/, '').replace(/\/v1$/, '');
+  function emptyState(){
+    return { emotions:{fear:10,love:20,anger:5,trust:55,disgust:5,joy:30,sadness:10,desire:10}, history:[], lastThought:'', lastThoughtEmotion:'', msgCount:0 };
   }
 
-  async function aiGenerate(userPrompt, systemPrompt) {
-    const s    = getSettings();
-    const base = getBaseUrl();
-
-    if (base) {
-      const apiKey  = (s.apiKey || '').trim();
-      const headers = { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) };
-      const model   = s.apiModel || 'gpt-4o-mini';
-      const urls    = [`${base}/v1/chat/completions`, `${base}/chat/completions`];
-
-      for (const url of urls) {
-        try {
-          const resp = await fetch(url, {
-            method: 'POST', headers,
-            body: JSON.stringify({ model, max_tokens: 600, temperature: 0.2,
-              messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] }),
-          });
-          if (!resp.ok) continue;
-          const data = await resp.json();
-          const text = data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text;
-          if (text?.trim()) return text;
-        } catch {}
-      }
+  async function getSoulState(create=false){
+    const key=chatKey();
+    if(!ctx().chatMetadata[key]){
+      if(create){ ctx().chatMetadata[key]=emptyState(); await ctx().saveMetadata(); }
+      else return emptyState();
     }
-
-    const c = ctx();
-    if (typeof c.generateRaw !== 'function') throw new Error('generateRaw недоступен — настрой API в настройках');
-    const result = await c.generateRaw(userPrompt, null, false, true, systemPrompt, true);
-    if (!result?.trim()) throw new Error('Модель вернула пустой ответ');
-    return result;
+    const s=ctx().chatMetadata[key];
+    if(!s.emotions)  s.emotions =emptyState().emotions;
+    if(!s.history)   s.history  =[];
+    if(!s.lastThought)s.lastThought='';
+    if(!s.msgCount)  s.msgCount =0;
+    return s;
   }
+  async function saveState(){ await ctx().saveMetadata(); }
 
-  // ── Analysis ──────────────────────────────────────────────────────────────
-
-  function buildAnalysisPrompt(charName) {
-    return `Ты — психоаналитик RP-персонажей. Анализируй эмоциональное состояние персонажа по его репликам.
-
-ПЕРСОНАЖ: ${charName}
-
-ШКАЛА ЭМОЦИЙ (0–100):
-- love: романтическая привязанность, нежность
-- joy: радость, удовольствие, восторг
-- trust: доверие, открытость, уязвимость
-- anticipation: предвкушение, напряжение ожидания
-- fear: страх, тревога, паника
-- sadness: грусть, тоска, опустошение
-- disgust: отвращение, брезгливость, неприятие
-- anger: злость, раздражение, ярость
-
-ПРАВИЛА:
-- Анализируй ПОДТЕКСТ, не только буквальный смысл
-- Все 8 значений обязательны, диапазон 0–100
-- innerThought — что {{char}} реально думает/чувствует но НЕ говорит (1–2 предложения, от первого лица)
-- delta — краткое описание ключевого эмоционального сдвига за этот обмен (до 8 слов)
-
-Верни ТОЛЬКО валидный JSON без markdown:
-{"emotions":{"love":N,"joy":N,"trust":N,"anticipation":N,"fear":N,"sadness":N,"disgust":N,"anger":N},"innerThought":"...","delta":"..."}`;
-  }
-
-  function parseAnalysis(raw) {
-    if (!raw) return null;
-    const clean = raw.replace(/```json|```/gi, '').trim();
-    try { const p = JSON.parse(clean); if (p.emotions) return p; } catch {}
-    const m = raw.match(/\{[\s\S]+\}/);
-    if (m) { try { const p = JSON.parse(m[0]); if (p.emotions) return p; } catch {} }
-    return null;
-  }
-
-  async function runAnalysis() {
-    if (analyzing) return;
-    const s     = getSettings();
-    if (!s.enabled || !s.autoAnalyze) return;
-
-    const { chat } = ctx();
-    if (!Array.isArray(chat) || !chat.length) return;
-
-    const state    = await getState(true);
-    const chatLen  = chat.length;
-    if (chatLen <= state.lastAnalyzed && state.lastAnalyzed > 0) return;
-
-    analyzing = true;
-    updateFabAnalyzing(true);
-
-    try {
-      const charName = getCharName();
-      const msgs     = getLastMessages(s.scanDepth || 8);
-      if (!msgs.trim()) return;
-
-      const system   = buildAnalysisPrompt(charName);
-      const user     = `ПОСЛЕДНИЕ РЕПЛИКИ:\n${msgs}\n\nПроанализируй текущее эмоциональное состояние ${charName}. Верни JSON.`;
-
-      const raw      = await aiGenerate(user, system);
-      const parsed   = parseAnalysis(raw);
-      if (!parsed) { console.warn('[LSL] не удалось распарсить:', raw?.slice(0,120)); return; }
-
-      // Smoothly blend new values (70% new + 30% old for stability)
-      for (const k of EMOTION_KEYS) {
-        const newVal = clamp(Math.round(parsed.emotions[k] ?? state.emotions[k]), 0, 100);
-        state.emotions[k] = Math.round(state.emotions[k] * 0.3 + newVal * 0.7);
-      }
-
-      // Store history snapshot
-      state.history.push({ msgIdx: chatLen, emotions: { ...state.emotions }, ts: Date.now() });
-      if (state.history.length > 120) state.history.shift();
-
-      // Store inner thought
-      if (parsed.innerThought?.trim() && s.showInnerThought) {
-        const dominant = getDominant(state.emotions);
-        state.thoughts.unshift({
-          text: parsed.innerThought.trim(),
-          delta: parsed.delta || '',
-          ts: Date.now(),
-          msgIdx: chatLen,
-          dominant,
-        });
-        if (state.thoughts.length > 40) state.thoughts.length = 40;
-      }
-
-      state.lastAnalyzed = chatLen;
-      await saveState();
-
-      // Inject behavior if triggered
-      if (s.injectBehavior) await updateBehaviorPrompt(state);
-
-      // Update UI
-      updateFabDominant(state);
-      if (panelOpen) await renderPanelContent();
-
-      // Flash notification
-      const dom = getDominant(state.emotions);
-      const emo = EMOTIONS[dom];
-      showPulse(emo.color, emo.icon);
-
-    } catch (e) {
-      console.error('[LSL] analysis failed:', e);
-    } finally {
-      analyzing = false;
-      updateFabAnalyzing(false);
-    }
-  }
-
-  // ── Behavior injection ────────────────────────────────────────────────────
-
-  async function updateBehaviorPrompt(state) {
-    const lines = [];
-    for (const [emotion, trigger] of Object.entries(BEHAVIOR_TRIGGERS)) {
-      if ((state.emotions[emotion] || 0) >= trigger.threshold) {
-        lines.push(trigger.prompt);
-      }
-    }
-    const text = lines.join('\n');
-    try {
-      ctx().setExtensionPrompt(BEHAVIOR_TAG, text, EXT_PROMPT_TYPES.IN_PROMPT, 0, true);
-      behaviorActive = lines.length > 0;
-    } catch {}
-  }
-
-  // ── FAB ───────────────────────────────────────────────────────────────────
-
-  function getFabSize() {
-    const sc = getSettings().fabScale ?? 0.9;
-    return { W: Math.round(60 * sc) + 10, H: Math.round(52 * sc) + 6 };
-  }
-
-  function clampFab(l, t) {
-    const { W, H } = getFabSize();
-    return {
-      l: clamp(l, FAB_MARGIN, Math.max(FAB_MARGIN, vpW() - W - FAB_MARGIN)),
-      t: clamp(t, FAB_MARGIN, Math.max(FAB_MARGIN, vpH() - H - FAB_MARGIN)),
-    };
-  }
-
-  function saveFabPos(l, t) {
-    const { W, H } = getFabSize();
-    const p = clampFab(l, t);
-    const rx = Math.max(1, vpW() - W - FAB_MARGIN * 2);
-    const ry = Math.max(1, vpH() - H - FAB_MARGIN * 2);
-    try {
-      localStorage.setItem(FAB_POS_KEY, JSON.stringify({
-        x: (p.l - FAB_MARGIN) / rx, y: (p.t - FAB_MARGIN) / ry, l: p.l, t: p.t,
-      }));
-    } catch {}
-  }
-
-  function applyFabPos() {
-    const el = document.getElementById('lsl_fab');
-    if (!el) return;
-    el.style.transform = 'none'; el.style.right = el.style.bottom = 'auto';
-    const { W, H } = getFabSize();
-    try {
-      const raw = localStorage.getItem(FAB_POS_KEY);
-      if (!raw) { setFabDefault(); return; }
-      const pos = JSON.parse(raw);
-      const l = typeof pos.x === 'number' ? Math.round(pos.x * (vpW() - W - FAB_MARGIN * 2)) + FAB_MARGIN : pos.l;
-      const t = typeof pos.y === 'number' ? Math.round(pos.y * (vpH() - H - FAB_MARGIN * 2)) + FAB_MARGIN : pos.t;
-      const c = clampFab(l, t);
-      el.style.left = c.l + 'px'; el.style.top = c.t + 'px';
-    } catch { setFabDefault(); }
-  }
-
-  function setFabDefault() {
-    const el = document.getElementById('lsl_fab');
-    if (!el) return;
-    const { W, H } = getFabSize();
-    const l = clamp(vpW() - W - FAB_MARGIN - 160, FAB_MARGIN, vpW() - W - FAB_MARGIN);
-    const t = clamp(Math.round((vpH() - H) / 2) + 60, FAB_MARGIN, vpH() - H - FAB_MARGIN);
-    el.style.left = l + 'px'; el.style.top = t + 'px';
-    saveFabPos(l, t);
-  }
-
-  function applyFabScale() {
-    const btn = document.getElementById('lsl_fab_btn');
-    if (!btn) return;
-    const sc = getSettings().fabScale ?? 0.9;
-    btn.style.transform = `scale(${sc})`;
-    btn.style.transformOrigin = 'top left';
-    const fab = document.getElementById('lsl_fab');
-    if (fab) { fab.style.width = Math.round(60 * sc) + 'px'; fab.style.height = Math.round(52 * sc) + 'px'; }
-  }
-
-  function ensureFab() {
-    if (document.getElementById('lsl_fab')) return;
-    const div = document.createElement('div');
-    div.id = 'lsl_fab';
-    div.innerHTML = `
-      <button type="button" id="lsl_fab_btn" title="Living Soul — эмоции персонажа">
-        <div class="lsl-fab-orb" id="lsl_fab_orb">🧠</div>
-        <div class="lsl-fab-label" id="lsl_fab_label">душа</div>
-      </button>
-      <button type="button" id="lsl_fab_hide" title="Скрыть">✕</button>
-    `;
-    document.body.appendChild(div);
-
-    document.getElementById('lsl_fab_btn').addEventListener('click', ev => {
-      if (Date.now() - lastFabDragTs < 350) { ev.preventDefault(); return; }
-      togglePanel();
-    });
-    document.getElementById('lsl_fab_hide').addEventListener('click', async () => {
-      getSettings().showFab = false;
-      ctx().saveSettingsDebounced();
-      document.getElementById('lsl_fab').style.display = 'none';
-    });
-
-    initFabDrag();
-    applyFabPos();
-    applyFabScale();
-  }
-
-  function updateFabDominant(state) {
-    const dom  = getDominant(state.emotions);
-    const emo  = EMOTIONS[dom];
-    const orb  = document.getElementById('lsl_fab_orb');
-    const lbl  = document.getElementById('lsl_fab_label');
-    const fab  = document.getElementById('lsl_fab_btn');
-    if (orb) { orb.textContent = emo.icon; orb.style.filter = `drop-shadow(0 0 6px ${emo.color})`; }
-    if (lbl) lbl.textContent = emo.label.toLowerCase();
-    if (fab) fab.style.setProperty('--lsl-dominant', emo.color);
-  }
-
-  function updateFabAnalyzing(on) {
-    const fab = document.getElementById('lsl_fab');
-    if (fab) fab.classList.toggle('lsl-analyzing', on);
-  }
-
-  function showPulse(color, icon) {
-    const el = document.createElement('div');
-    el.className = 'lsl-pulse-flash';
-    el.textContent = icon;
-    el.style.setProperty('--pc', color);
+  function showToast(msg,type='info',duration=3500){
+    const el=document.createElement('div');
+    el.className=`ls-toast ls-toast-${type}`;
+    el.innerHTML=msg;
     document.body.appendChild(el);
-    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('lsl-pulse-show')));
-    setTimeout(() => { el.classList.remove('lsl-pulse-show'); setTimeout(() => el.remove(), 500); }, 2000);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>el.classList.add('ls-toast-show')));
+    setTimeout(()=>{ el.classList.remove('ls-toast-show'); setTimeout(()=>el.remove(),400); },duration);
   }
 
-  function initFabDrag() {
-    const fab    = document.getElementById('lsl_fab');
-    const handle = document.getElementById('lsl_fab_btn');
-    if (!fab || !handle || fab.dataset.drag === '1') return;
-    fab.dataset.drag = '1';
+  async function analyzeMessage(botMessage,charName,userName,previousEmotions){
+    if(!getSettings().apiEnabled) return null;
+    const prevStr=EMOTIONS.map(e=>`${e.name}:${previousEmotions[e.id]||0}`).join(',');
+    const prompt=`Ты — психологический анализатор RP-персонажа.
+Персонаж: ${charName}
+Пользователь: ${userName}
+Предыдущие эмоции (0-100): ${prevStr}
+Последнее сообщение персонажа:
+"""
+${botMessage.slice(0,1200)}
+"""
+Проанализируй эмоциональное состояние ${charName} после этого сообщения.
+Эмоции меняются постепенно — резкие скачки только при сильных триггерах.
+Ответь СТРОГО JSON без markdown:
+{"emotions":{"fear":0,"love":0,"anger":0,"trust":0,"disgust":0,"joy":0,"sadness":0,"desire":0},"thought":"<тайная мысль 1-2 предложения на русском>","dominantEmotion":"<id>","shift":"<что изменилось 1 предложение>"}`;
+    try{
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({model:API_MODEL,max_tokens:800,messages:[{role:'user',content:prompt}]})
+      });
+      if(!resp.ok) throw new Error(`API ${resp.status}`);
+      const data=await resp.json();
+      const raw=data.content?.find(b=>b.type==='text')?.text||'';
+      return JSON.parse(raw.replace(/```json|```/g,'').trim());
+    }catch(e){ console.error('[LS] API:',e); return null; }
+  }
 
-    let sx, sy, sl, st, moved = false;
-    const onMove = ev => {
-      const dx = ev.clientX - sx, dy = ev.clientY - sy;
-      if (!moved && Math.abs(dx) + Math.abs(dy) > 6) { moved = true; fab.classList.add('lsl-dragging'); }
-      if (!moved) return;
-      const p = clampFab(sl + dx, st + dy);
-      fab.style.left = p.l + 'px'; fab.style.top = p.t + 'px';
-      fab.style.right = fab.style.bottom = 'auto';
+  function applyDecay(emotions){
+    if(!getSettings().decayEnabled) return emotions;
+    const rate=getSettings().decayRate??3;
+    const neutral={fear:5,love:20,anger:5,trust:55,disgust:5,joy:25,sadness:10,desire:10};
+    const r={...emotions};
+    for(const e of EMOTIONS){
+      const cur=r[e.id]||0, neu=neutral[e.id];
+      if(cur>neu) r[e.id]=Math.max(neu,cur-rate);
+      else if(cur<neu) r[e.id]=Math.min(neu,cur+rate);
+    }
+    return r;
+  }
+
+  function buildSoulPrompt(state){
+    const e=state.emotions;
+    const dominant=getDominantEmotion(e);
+    const high=EMOTIONS.filter(em=>(e[em.id]||0)>=60).sort((a,b)=>(e[b.id]||0)-(e[a.id]||0));
+    const lines=['ЭМОЦИОНАЛЬНЫЙ ПРОФИЛЬ {{char}} (скрытое):'];
+    if(high.length>0) lines.push(`Сильные эмоции: ${high.map(em=>`${em.name} ${e[em.id]}%`).join(', ')}.`);
+    if((e.trust||0)<30) lines.push(`Низкое доверие (${e.trust}%) — {{char}} насторожен(а).`);
+    lines.push(`Доминирует: ${dominant.name} (${e[dominant.id]}%). {{char}} ведёт себя соответственно, не называя это прямо.`);
+    return lines.join(' ');
+  }
+
+  async function updateSoulPrompt(){
+    const state=await getSoulState();
+    try{ ctx().setExtensionPrompt(SOUL_TAG,buildSoulPrompt(state),0,0,true); }catch(e){ console.error('[LS]',e); }
+  }
+
+  function checkTriggers(emotions){
+    const s=getSettings();
+    if(!s.triggersEnabled) return [];
+    const fired=[];
+    for(const tr of TRIGGERS){
+      const val=emotions[tr.emotion]||0;
+      const passes=tr.dir==='above'?val>=tr.threshold:val<=tr.threshold;
+      const was=activeTriggerIds.has(tr.id);
+      if(passes&&!was){ activeTriggerIds.add(tr.id); fired.push(tr); }
+      else if(!passes&&was){ activeTriggerIds.delete(tr.id); }
+    }
+    return fired;
+  }
+
+  async function updateTriggerPrompt(){
+    const active=TRIGGERS.filter(tr=>activeTriggerIds.has(tr.id));
+    const text=active.map(tr=>tr.prompt).join('\n');
+    try{ ctx().setExtensionPrompt('LS_TRIGGER',text,0,0,true); }catch{}
+  }
+
+  async function onMessageReceived(){
+    if(analyzing) return;
+    if(!getSettings().enabled) return;
+    analyzing=true;
+    try{
+      const c=ctx();
+      const chat=c.chat;
+      if(!chat||chat.length===0) return;
+      const lastMsg=[...chat].reverse().find(m=>!m.is_user);
+      if(!lastMsg) return;
+      const state=await getSoulState(true);
+      const charName=c.name2||'Персонаж';
+      const userName=c.name1||'Пользователь';
+      state.emotions=applyDecay(state.emotions);
+      const fabIcon=document.getElementById('ls_fab_icon');
+      if(fabIcon) fabIcon.textContent='🔮';
+      const result=await analyzeMessage(lastMsg.mes,charName,userName,state.emotions);
+      if(result&&result.emotions){
+        for(const e of EMOTIONS){
+          if(typeof result.emotions[e.id]==='number')
+            state.emotions[e.id]=clamp(Math.round(result.emotions[e.id]),0,100);
+        }
+        if(result.thought){ state.lastThought=result.thought; state.lastThoughtEmotion=result.dominantEmotion||getDominantEmotion(state.emotions).id; }
+        state.history.push({ ts:Date.now(), msgIndex:state.msgCount, emotions:{...state.emotions}, thought:result.thought||'', shift:result.shift||'', charMsg:lastMsg.mes.slice(0,120) });
+        if(state.history.length>MAX_HISTORY) state.history.shift();
+        state.msgCount++;
+        const fired=checkTriggers(state.emotions);
+        for(const tr of fired) showToast(`${tr.name} активирован!`,'trigger',4500);
+        await updateTriggerPrompt();
+        if(getSettings().showThoughtBubble&&result.thought) showThoughtBubble(result.thought,result.dominantEmotion);
+      } else { state.msgCount++; }
+      await saveState();
+      await updateSoulPrompt();
+      updateFabDisplay(state);
+      if(panelOpen) await renderPanelContent();
+    }finally{
+      analyzing=false;
+      const fabIcon=document.getElementById('ls_fab_icon');
+      if(fabIcon){ const s=await getSoulState(); fabIcon.textContent=getDominantEmotion(s.emotions).icon; }
+    }
+  }
+
+  function showThoughtBubble(thought,emotionId){
+    document.querySelectorAll('.ls-thought-bubble').forEach(el=>el.remove());
+    const ed=EMOTION_MAP[emotionId]||EMOTIONS[0];
+    const el=document.createElement('div');
+    el.className='ls-thought-bubble';
+    el.style.setProperty('--bubble-color',ed.color);
+    el.innerHTML=`<div class="ls-bubble-header"><span>${ed.icon}</span><span class="ls-bubble-label">Тайная мысль</span><button class="ls-bubble-close" type="button">✕</button></div><div class="ls-bubble-text">${escHtml(thought)}</div>`;
+    document.body.appendChild(el);
+    el.querySelector('.ls-bubble-close').addEventListener('click',e=>{
+      e.stopPropagation(); el.classList.add('ls-bubble-hide'); setTimeout(()=>el.remove(),400);
+    },true);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>el.classList.add('ls-bubble-show')));
+    setTimeout(()=>{ el.classList.add('ls-bubble-hide'); setTimeout(()=>el.remove(),400); },12000);
+  }
+
+  function updateFabDisplay(state){
+    const dom=getDominantEmotion(state.emotions);
+    const iconEl=document.getElementById('ls_fab_icon');
+    const barEl =document.getElementById('ls_fab_bar_fill');
+    const fab   =document.getElementById('ls_fab');
+    if(iconEl) iconEl.textContent=dom.icon;
+    if(barEl){ barEl.style.width=(state.emotions[dom.id]||0)+'%'; barEl.style.background=dom.color; barEl.style.boxShadow=`0 0 8px ${dom.color}`; }
+    if(fab) fab.style.setProperty('--dom-color',dom.color);
+  }
+
+  function clampFab(l,t){ return{ l:clamp(l,FAB_MARGIN,Math.max(FAB_MARGIN,vpW()-68-FAB_MARGIN)), t:clamp(t,FAB_MARGIN,Math.max(FAB_MARGIN,vpH()-68-FAB_MARGIN)) }; }
+  function saveFabPos(l,t){ const p=clampFab(l,t); try{ localStorage.setItem(FAB_POS_KEY,JSON.stringify({l:p.l,t:p.t})); }catch{} }
+  function applyFabPos(){
+    const el=document.getElementById('ls_fab'); if(!el) return;
+    try{ const raw=localStorage.getItem(FAB_POS_KEY); if(!raw){setFabDefault();return;} const pos=JSON.parse(raw); const c=clampFab(pos.l,pos.t); el.style.left=c.l+'px'; el.style.top=c.t+'px'; }catch{ setFabDefault(); }
+  }
+  function setFabDefault(){
+    const el=document.getElementById('ls_fab'); if(!el) return;
+    const l=clamp(vpW()-76,FAB_MARGIN,vpW()-76), t=clamp(Math.round(vpH()*0.35),FAB_MARGIN,vpH()-76);
+    el.style.left=l+'px'; el.style.top=t+'px'; saveFabPos(l,t);
+  }
+
+  function ensureFab(){
+    if(document.getElementById('ls_fab')) return;
+    const div=document.createElement('div'); div.id='ls_fab';
+    div.innerHTML=`<button type="button" id="ls_fab_btn" title="Living Soul"><div class="ls-fab-glow"></div><div class="ls-fab-icon" id="ls_fab_icon">🧠</div><div class="ls-fab-bar"><div class="ls-fab-bar-fill" id="ls_fab_bar_fill"></div></div></button><button type="button" id="ls_fab_hide" title="Скрыть">✕</button>`;
+    document.body.appendChild(div);
+    document.getElementById('ls_fab_btn').addEventListener('click',ev=>{
+      if(Date.now()-lastFabDragTs<350){ev.preventDefault();return;} togglePanel();
+    });
+    document.getElementById('ls_fab_hide').addEventListener('click',()=>{
+      getSettings().showFab=false; ctx().saveSettingsDebounced(); renderFab();
+    },true);
+    initFabDrag(); applyFabPos();
+    getSoulState().then(s=>updateFabDisplay(s));
+  }
+
+  function renderFab(){
+    const s=getSettings(), fab=document.getElementById('ls_fab');
+    if(!fab){ if(s.enabled&&s.showFab) ensureFab(); return; }
+    if(!s.enabled||!s.showFab){ fab.remove(); return; }
+  }
+
+  function initFabDrag(){
+    const fab=document.getElementById('ls_fab'), handle=document.getElementById('ls_fab_btn');
+    if(!fab||!handle||fab.dataset.drag==='1') return;
+    fab.dataset.drag='1';
+    let sx,sy,sl,st,moved=false;
+    const THRESH=6;
+    const onMove=ev=>{
+      const dx=ev.clientX-sx, dy=ev.clientY-sy;
+      if(!moved&&Math.abs(dx)+Math.abs(dy)>THRESH){ moved=true; fab.classList.add('ls-dragging'); }
+      if(!moved) return;
+      const p=clampFab(sl+dx,st+dy); fab.style.left=p.l+'px'; fab.style.top=p.t+'px'; fab.style.right=fab.style.bottom='auto';
       ev.preventDefault(); ev.stopPropagation();
     };
-    const onEnd = ev => {
-      try { handle.releasePointerCapture(ev.pointerId); } catch {}
-      document.removeEventListener('pointermove', onMove, { passive: false });
-      document.removeEventListener('pointerup', onEnd);
-      document.removeEventListener('pointercancel', onEnd);
-      if (moved) { saveFabPos(parseInt(fab.style.left)||0, parseInt(fab.style.top)||0); lastFabDragTs = Date.now(); }
-      moved = false; fab.classList.remove('lsl-dragging');
+    const onEnd=ev=>{
+      try{ handle.releasePointerCapture(ev.pointerId); }catch{}
+      document.removeEventListener('pointermove',onMove,{passive:false}); document.removeEventListener('pointerup',onEnd);
+      if(moved){ lastFabDragTs=Date.now(); saveFabPos(parseFloat(fab.style.left),parseFloat(fab.style.top)); }
+      fab.classList.remove('ls-dragging');
     };
-    handle.addEventListener('pointerdown', ev => {
-      if (ev.pointerType === 'mouse' && ev.button !== 0) return;
-      const { W, H } = getFabSize();
-      const curL = parseInt(fab.style.left) || (vpW() - W - FAB_MARGIN - 160);
-      const curT = parseInt(fab.style.top)  || Math.round((vpH() - H) / 2);
-      const p = clampFab(curL, curT);
-      fab.style.left = p.l + 'px'; fab.style.top = p.t + 'px';
-      fab.style.right = fab.style.bottom = 'auto'; fab.style.transform = 'none';
-      sx = ev.clientX; sy = ev.clientY; sl = p.l; st = p.t; moved = false;
-      try { handle.setPointerCapture(ev.pointerId); } catch {}
-      document.addEventListener('pointermove', onMove, { passive: false });
-      document.addEventListener('pointerup', onEnd, { passive: true });
-      document.addEventListener('pointercancel', onEnd, { passive: true });
-      ev.preventDefault();
-    }, { passive: false });
-
-    let rt = null;
-    const onResize = () => { clearTimeout(rt); rt = setTimeout(applyFabPos, 200); };
-    window.addEventListener('resize', onResize);
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
+    handle.addEventListener('pointerdown',ev=>{
+      if(ev.button!==0) return; sx=ev.clientX; sy=ev.clientY; sl=parseFloat(fab.style.left)||0; st=parseFloat(fab.style.top)||0; moved=false;
+      handle.setPointerCapture(ev.pointerId); document.addEventListener('pointermove',onMove,{passive:false}); document.addEventListener('pointerup',onEnd);
+    });
   }
 
-  // ── Panel ─────────────────────────────────────────────────────────────────
-
-  function ensurePanel() {
-    if (document.getElementById('lsl_panel')) return;
-
-    const overlay = document.createElement('div');
-    overlay.id = 'lsl_overlay';
-    overlay.addEventListener('click', ev => { if (ev.target === overlay) closePanel(); });
+  function ensurePanel(){
+    if(document.getElementById('ls_panel')) return;
+    const overlay=document.createElement('div'); overlay.id='ls_overlay';
+    overlay.addEventListener('click',ev=>{ if(ev.target===overlay) closePanel(); });
     document.body.appendChild(overlay);
-
-    const panel = document.createElement('aside');
-    panel.id = 'lsl_panel';
-    panel.setAttribute('aria-hidden', 'true');
-    panel.innerHTML = `
-      <header class="lsl-header">
-        <div class="lsl-header-top">
-          <div class="lsl-title">
-            <span class="lsl-title-orb" id="lsl_title_orb">🧠</span>
-            <div>
-              <div class="lsl-title-main">LIVING SOUL</div>
-              <div class="lsl-title-sub" id="lsl_title_sub">Эмоции персонажа</div>
-            </div>
-          </div>
-          <div class="lsl-header-actions">
-            <button type="button" class="lsl-analyze-btn" id="lsl_analyze_btn" title="Анализировать сейчас">⟳</button>
-            <button type="button" class="lsl-close-btn"   id="lsl_close_btn"   title="Закрыть">✕</button>
-          </div>
-        </div>
-        <div class="lsl-emotion-strip" id="lsl_strip"></div>
-      </header>
-
-      <nav class="lsl-tabs">
-        <button class="lsl-tab lsl-tab-active" data-tab="radar">🎯 Радар</button>
-        <button class="lsl-tab" data-tab="thoughts">💭 Мысли</button>
-        <button class="lsl-tab" data-tab="graph">📈 График</button>
-        <button class="lsl-tab" data-tab="triggers">⚡ Триггеры</button>
-      </nav>
-
-      <div class="lsl-body" id="lsl_body"></div>
-    `;
+    const panel=document.createElement('div'); panel.id='ls_panel';
+    panel.setAttribute('aria-hidden','true');
+    panel.innerHTML=`
+      <div class="ls-panel-header">
+        <div class="ls-panel-title"><span class="ls-title-brain">🧠</span><span>LIVING SOUL</span><span class="ls-title-sub" id="ls_char_name"></span></div>
+        <button type="button" class="ls-panel-close" id="ls_panel_close" title="Закрыть">✕</button>
+      </div>
+      <div class="ls-tabs-row">
+        <button class="ls-tab active" data-tab="radar">🕸️ Радар</button>
+        <button class="ls-tab" data-tab="thoughts">💭 Мысли</button>
+        <button class="ls-tab" data-tab="history">📈 История</button>
+        <button class="ls-tab" data-tab="settings">⚙️ Настройки</button>
+      </div>
+      <div class="ls-panel-body" id="ls_body"></div>`;
     document.body.appendChild(panel);
-
-    // Close — capture phase
-    document.getElementById('lsl_close_btn').addEventListener('click', e => {
-      e.stopPropagation(); closePanel();
-    }, true);
-    document.addEventListener('keydown', e => { if (e.key === 'Escape' && panelOpen) closePanel(); }, true);
-
-    document.getElementById('lsl_analyze_btn').addEventListener('click', async () => {
-      const btn = document.getElementById('lsl_analyze_btn');
-      if (analyzing) return;
-      btn.classList.add('lsl-spinning');
-      await runAnalysis();
-      btn.classList.remove('lsl-spinning');
-    });
-
-    panel.querySelectorAll('.lsl-tab').forEach(btn => {
-      btn.addEventListener('click', () => {
-        panel.querySelectorAll('.lsl-tab').forEach(b => b.classList.remove('lsl-tab-active'));
-        btn.classList.add('lsl-tab-active');
-        activeTab = btn.getAttribute('data-tab');
-        renderPanelContent();
+    document.getElementById('ls_panel_close').addEventListener('click',e=>{ e.stopPropagation(); closePanel(); },true);
+    document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&panelOpen) closePanel(); },true);
+    panel.querySelectorAll('.ls-tab').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        panel.querySelectorAll('.ls-tab').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active'); activeTab=btn.getAttribute('data-tab'); renderPanelContent();
       });
     });
   }
 
-  async function togglePanel() {
-    if (panelOpen) { closePanel(); return; }
-    panelOpen = true;
-    ensurePanel();
-    document.getElementById('lsl_overlay').classList.add('lsl-overlay-open');
-    const panel = document.getElementById('lsl_panel');
-    panel.classList.add('lsl-panel-open');
-    panel.setAttribute('aria-hidden', 'false');
+  async function togglePanel(){
+    if(panelOpen){ closePanel(); return; }
+    panelOpen=true; ensurePanel();
+    document.getElementById('ls_overlay')?.classList.add('ls-overlay-open');
+    const panel=document.getElementById('ls_panel');
+    if(panel){ panel.classList.add('ls-panel-open'); panel.setAttribute('aria-hidden','false'); }
+    const nameEl=document.getElementById('ls_char_name');
+    if(nameEl) nameEl.textContent=ctx().name2?`— ${ctx().name2}`:'';
     await renderPanelContent();
   }
 
-  function closePanel() {
-    panelOpen = false;
-    document.getElementById('lsl_overlay')?.classList.remove('lsl-overlay-open');
-    const panel = document.getElementById('lsl_panel');
-    if (panel) { panel.classList.remove('lsl-panel-open'); panel.setAttribute('aria-hidden', 'true'); }
+  function closePanel(){
+    panelOpen=false;
+    document.getElementById('ls_overlay')?.classList.remove('ls-overlay-open');
+    const panel=document.getElementById('ls_panel');
+    if(panel){ panel.classList.remove('ls-panel-open'); panel.setAttribute('aria-hidden','true'); }
   }
 
-  async function renderPanelContent() {
-    const state    = await getState();
-    const charName = getCharName();
-    const dom      = getDominant(state.emotions);
-    const emo      = EMOTIONS[dom];
-
-    // Header
-    const titleOrb = document.getElementById('lsl_title_orb');
-    const titleSub = document.getElementById('lsl_title_sub');
-    if (titleOrb) { titleOrb.textContent = emo.icon; titleOrb.style.filter = `drop-shadow(0 0 8px ${emo.color})`; }
-    if (titleSub) titleSub.textContent = `${charName} · ${emo.label}`;
-
-    // Emotion strip
-    renderStrip(state);
-
-    const body = document.getElementById('lsl_body');
-    if (!body) return;
-
-    if      (activeTab === 'radar')    body.innerHTML = renderRadarTab(state);
-    else if (activeTab === 'thoughts') body.innerHTML = renderThoughtsTab(state);
-    else if (activeTab === 'graph')    { body.innerHTML = renderGraphTab(state); drawGraph(state); }
-    else if (activeTab === 'triggers') body.innerHTML = renderTriggersTab(state);
+  async function renderPanelContent(){
+    const state=await getSoulState(true);
+    const body=document.getElementById('ls_body'); if(!body) return;
+    if     (activeTab==='radar')   { body.innerHTML=renderRadarTab(state);    bindRadarEvents(state); }
+    else if(activeTab==='thoughts'){ body.innerHTML=renderThoughtsTab(state); }
+    else if(activeTab==='history') { body.innerHTML=renderHistoryTab(state);  drawHistoryChart(state); }
+    else                           { body.innerHTML=renderSettingsTab();       bindSettingsEvents(); }
   }
 
-  // ── Emotion strip ─────────────────────────────────────────────────────────
-
-  function renderStrip(state) {
-    const strip = document.getElementById('lsl_strip');
-    if (!strip) return;
-    strip.innerHTML = EMOTION_KEYS.map(k => {
-      const emo = EMOTIONS[k];
-      const val = state.emotions[k] || 0;
-      const pct = val;
-      return `
-        <div class="lsl-strip-item" title="${emo.label}: ${val}">
-          <div class="lsl-strip-bar-bg">
-            <div class="lsl-strip-bar-fill" style="height:${pct}%;background:${emo.color};box-shadow:0 0 ${Math.round(pct/15)}px ${emo.color}40"></div>
-          </div>
-          <div class="lsl-strip-icon">${emo.icon}</div>
-          <div class="lsl-strip-val">${val}</div>
-        </div>`;
-    }).join('');
-  }
-
-  // ── Radar tab ─────────────────────────────────────────────────────────────
-
-  function renderRadarTab(state) {
-    const dom = getDominant(state.emotions);
-    const emo = EMOTIONS[dom];
-    const items = EMOTION_KEYS.map(k => {
-      const e = EMOTIONS[k];
-      const v = state.emotions[k] || 0;
-      const width = v;
-      const triggered = (BEHAVIOR_TRIGGERS[k]?.threshold || 999) <= v;
-      return `
-        <div class="lsl-bar-row">
-          <div class="lsl-bar-icon" title="${e.label}">${e.icon}</div>
-          <div class="lsl-bar-label">${e.label}</div>
-          <div class="lsl-bar-track">
-            <div class="lsl-bar-fill ${triggered ? 'lsl-bar-triggered' : ''}"
-              style="width:${width}%;background:${e.color};box-shadow:${triggered ? `0 0 8px ${e.color}` : 'none'}">
-            </div>
-          </div>
-          <div class="lsl-bar-val ${triggered ? 'lsl-val-triggered' : ''}" style="color:${e.color}">${v}</div>
-          ${triggered ? `<div class="lsl-trigger-badge" title="Триггер активен">⚡</div>` : '<div class="lsl-trigger-badge" style="opacity:0">⚡</div>'}
-        </div>`;
-    }).join('');
-
-    const lastThought = state.thoughts[0];
-    const thoughtHtml = lastThought
-      ? `<div class="lsl-radar-thought">
-          <div class="lsl-thought-label">💭 Последняя мысль</div>
-          <div class="lsl-thought-text">"${escHtml(lastThought.text)}"</div>
-          ${lastThought.delta ? `<div class="lsl-thought-delta">${escHtml(lastThought.delta)}</div>` : ''}
-        </div>`
-      : '';
-
-    return `
-      <div class="lsl-radar-wrap">
-        <div class="lsl-radar-svg-wrap">
-          ${buildRadarSvg(state)}
-        </div>
-        <div class="lsl-bars-wrap">${items}</div>
-        ${thoughtHtml}
-      </div>`;
-  }
-
-  function buildRadarSvg(state) {
-    const N   = EMOTION_KEYS.length;
-    const CX  = 110, CY = 110, R = 90;
-    const step = (Math.PI * 2) / N;
-
-    // Grid rings
-    const rings = [25, 50, 75, 100].map(r => {
-      const pts = EMOTION_KEYS.map((_, i) => {
-        const a = -Math.PI / 2 + i * step;
-        const rr = R * r / 100;
-        return `${(CX + Math.cos(a) * rr).toFixed(1)},${(CY + Math.sin(a) * rr).toFixed(1)}`;
-      }).join(' ');
-      return `<polygon points="${pts}" class="lsl-svg-ring"/>`;
-    }).join('');
-
-    // Axes
-    const axes = EMOTION_KEYS.map((k, i) => {
-      const a  = -Math.PI / 2 + i * step;
-      const x2 = (CX + Math.cos(a) * R).toFixed(1);
-      const y2 = (CY + Math.sin(a) * R).toFixed(1);
-      return `<line x1="${CX}" y1="${CY}" x2="${x2}" y2="${y2}" class="lsl-svg-axis"/>`;
-    }).join('');
-
-    // Data polygon
-    const dataPoints = EMOTION_KEYS.map((k, i) => {
-      const a  = -Math.PI / 2 + i * step;
-      const v  = (state.emotions[k] || 0) / 100;
-      const rr = R * v;
-      return `${(CX + Math.cos(a) * rr).toFixed(1)},${(CY + Math.sin(a) * rr).toFixed(1)}`;
+  function buildRadarSvg(emotions){
+    const cx=150,cy=150,maxR=108, n=EMOTIONS.length, step=(2*Math.PI)/n, start=-Math.PI/2;
+    let rings='';
+    [0.25,0.5,0.75,1.0].forEach(pct=>{
+      const pts=EMOTIONS.map((_,i)=>{ const a=start+i*step,r=maxR*pct; return `${(cx+r*Math.cos(a)).toFixed(1)},${(cy+r*Math.sin(a)).toFixed(1)}`; }).join(' ');
+      rings+=`<polygon points="${pts}" fill="none" stroke="rgba(255,255,255,0.055)" stroke-width="${pct===1?1:0.5}"/>`;
     });
-    const dom   = getDominant(state.emotions);
-    const color = EMOTIONS[dom].color;
-
-    // Labels + icons
-    const labels = EMOTION_KEYS.map((k, i) => {
-      const a  = -Math.PI / 2 + i * step;
-      const d  = R + 18;
-      const lx = (CX + Math.cos(a) * d).toFixed(1);
-      const ly = (CY + Math.sin(a) * d).toFixed(1);
-      return `<text x="${lx}" y="${ly}" class="lsl-svg-label" text-anchor="middle" dominant-baseline="middle">${EMOTIONS[k].icon}</text>`;
-    }).join('');
-
-    // Dot on each vertex
-    const dots = EMOTION_KEYS.map((k, i) => {
-      const [px, py] = dataPoints[i].split(',');
-      return `<circle cx="${px}" cy="${py}" r="3" fill="${EMOTIONS[k].color}" opacity="0.9"/>`;
-    }).join('');
-
-    return `
-      <svg viewBox="0 0 220 220" class="lsl-radar-svg">
-        <defs>
-          <radialGradient id="lsl_rg" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stop-color="${color}" stop-opacity="0.18"/>
-            <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        ${rings}${axes}
-        <polygon points="${dataPoints.join(' ')}" fill="url(#lsl_rg)" stroke="${color}" stroke-width="1.5" stroke-opacity="0.85" fill-opacity="0.6"/>
-        ${dots}
-        ${labels}
-      </svg>`;
+    let axes='';
+    EMOTIONS.forEach((_,i)=>{ const a=start+i*step; axes+=`<line x1="${cx}" y1="${cy}" x2="${(cx+maxR*Math.cos(a)).toFixed(1)}" y2="${(cy+maxR*Math.sin(a)).toFixed(1)}" stroke="rgba(255,255,255,0.07)" stroke-width="0.5"/>`; });
+    let labels='';
+    EMOTIONS.forEach((e,i)=>{ const a=start+i*step, r=maxR+20; labels+=`<text x="${(cx+r*Math.cos(a)).toFixed(1)}" y="${(cy+r*Math.sin(a)).toFixed(1)}" text-anchor="middle" dominant-baseline="middle" font-size="19">${e.icon}</text>`; });
+    const dataPts=EMOTIONS.map((e,i)=>{ const a=start+i*step, r=maxR*((emotions[e.id]||0)/100); return `${(cx+r*Math.cos(a)).toFixed(1)},${(cy+r*Math.sin(a)).toFixed(1)}`; }).join(' ');
+    const dom=getDominantEmotion(emotions);
+    let dots='';
+    EMOTIONS.forEach((e,i)=>{ const a=start+i*step, r=maxR*((emotions[e.id]||0)/100); dots+=`<circle cx="${(cx+r*Math.cos(a)).toFixed(1)}" cy="${(cy+r*Math.sin(a)).toFixed(1)}" r="3.5" fill="${e.color}" opacity="0.9"/>`; });
+    const filters=EMOTIONS.map(e=>`<filter id="gf_${e.id}"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`).join('');
+    const mainGlow=`<filter id="mg" x="-25%" y="-25%" width="150%" height="150%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
+    return `<defs>${filters}${mainGlow}</defs>${rings}${axes}
+      <polygon points="${dataPts}" fill="${dom.color}22" stroke="${dom.color}bb" stroke-width="1.8" stroke-linejoin="round" filter="url(#mg)"/>
+      ${dots}${labels}`;
   }
 
-  // ── Thoughts tab ──────────────────────────────────────────────────────────
-
-  function renderThoughtsTab(state) {
-    if (!state.thoughts.length) {
-      return `<div class="lsl-empty">
-        <div class="lsl-empty-icon">💭</div>
-        <div>Тайных мыслей пока нет.<br>После следующего анализа они появятся здесь.</div>
+  function renderRadarTab(state){
+    const dom=getDominantEmotion(state.emotions);
+    const bars=EMOTIONS.map(e=>{
+      const val=state.emotions[e.id]||0;
+      const trig=TRIGGERS.find(t=>t.emotion===e.id);
+      const active=trig&&activeTriggerIds.has(trig.id);
+      return `<div class="ls-emo-row${active?' ls-emo-active':''}">
+        <span class="ls-emo-icon">${e.icon}</span>
+        <span class="ls-emo-name">${e.name}</span>
+        <div class="ls-emo-track"><div class="ls-emo-fill" style="width:${val}%;background:${e.color};box-shadow:0 0 6px ${e.color}88"></div></div>
+        <span class="ls-emo-val" style="color:${e.color}">${val}</span>
+        ${active?`<span class="ls-emo-trigger-dot" title="Триггер активен">⚡</span>`:''}
       </div>`;
-    }
-
-    const items = state.thoughts.map((t, idx) => {
-      const emo   = EMOTIONS[t.dominant] || EMOTIONS.joy;
-      const time  = new Date(t.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-      const fresh = idx === 0 ? ' lsl-thought-fresh' : '';
-      return `
-        <div class="lsl-thought-card${fresh}">
-          <div class="lsl-thought-card-top">
-            <span class="lsl-thought-card-icon">${emo.icon}</span>
-            <span class="lsl-thought-card-emo" style="color:${emo.color}">${emo.label}</span>
-            <span class="lsl-thought-card-time">${time}</span>
-            ${t.delta ? `<span class="lsl-thought-card-delta">· ${escHtml(t.delta)}</span>` : ''}
-          </div>
-          <div class="lsl-thought-card-text">"${escHtml(t.text)}"</div>
-        </div>`;
     }).join('');
-
     return `
-      <div class="lsl-thoughts-wrap">
-        <div class="lsl-thoughts-header">
-          💭 Тайные мысли персонажа
-          <span class="lsl-thoughts-count">${state.thoughts.length}</span>
+      <div class="ls-radar-wrap">
+        <div class="ls-radar-svg-wrap">
+          <svg id="ls_radar_svg" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">${buildRadarSvg(state.emotions)}</svg>
+          <div class="ls-radar-dom" style="color:${dom.color}">${dom.icon} ${dom.name} · ${state.emotions[dom.id]}%</div>
         </div>
-        ${items}
+        <div class="ls-emo-list">${bars}</div>
+      </div>
+      ${state.lastThought?`<div class="ls-thought-inline" style="--bc:${EMOTION_MAP[state.lastThoughtEmotion]?.color||'#9966ff'}"><div class="ls-thi-icon">${EMOTION_MAP[state.lastThoughtEmotion]?.icon||'💭'}</div><div class="ls-thi-text">"${escHtml(state.lastThought)}"</div></div>`:''}
+      <div class="ls-radar-actions">
+        <button class="ls-btn ls-btn-ghost" id="ls_manual_analyze" type="button">🔮 Анализировать</button>
+        <button class="ls-btn ls-btn-danger" id="ls_reset_emotions" type="button">↺ Сброс</button>
       </div>`;
   }
 
-  // ── Graph tab ─────────────────────────────────────────────────────────────
-
-  function renderGraphTab(state) {
-    const legendItems = EMOTION_KEYS.map(k => {
-      const e = EMOTIONS[k];
-      return `<div class="lsl-legend-item">
-        <div class="lsl-legend-dot" style="background:${e.color};box-shadow:0 0 4px ${e.color}"></div>
-        <span>${e.icon} ${e.label}</span>
-      </div>`;
-    }).join('');
-
-    return `
-      <div class="lsl-graph-wrap">
-        <div class="lsl-graph-title">История эмоций · ${state.history.length} точек</div>
-        <div class="lsl-canvas-wrap">
-          <canvas id="lsl_graph_canvas" width="340" height="200"></canvas>
-          ${!state.history.length ? '<div class="lsl-graph-empty">Нет данных — запусти анализ</div>' : ''}
-        </div>
-        <div class="lsl-legend">${legendItems}</div>
-      </div>`;
+  function bindRadarEvents(state){
+    document.getElementById('ls_manual_analyze')?.addEventListener('click',async()=>{ showToast('🔮 Анализирую...','info',2000); await onMessageReceived(); },true);
+    document.getElementById('ls_reset_emotions')?.addEventListener('click',async()=>{
+      const s=await getSoulState(true); Object.assign(s.emotions,emptyState().emotions); s.lastThought='';
+      await saveState(); await updateSoulPrompt(); activeTriggerIds.clear(); await updateTriggerPrompt();
+      updateFabDisplay(s); await renderPanelContent(); showToast('↺ Эмоции сброшены','info');
+    },true);
   }
 
-  function drawGraph(state) {
-    const canvas = document.getElementById('lsl_graph_canvas');
-    if (!canvas || !state.history.length) return;
+  function renderThoughtsTab(state){
+    if(state.history.length===0) return `<div class="ls-empty">💭 Тайные мысли появятся после первого анализа</div>`;
+    const items=[...state.history].reverse().slice(0,20).map(h=>{
+      if(!h.thought) return '';
+      const dom=getDominantEmotion(h.emotions);
+      const time=new Date(h.ts).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
+      return `<div class="ls-thought-card" style="--tc:${dom.color}">
+        <div class="ls-tc-header"><span>${dom.icon}</span><span class="ls-tc-emo" style="color:${dom.color}">${dom.name}</span><span class="ls-tc-time">${time}</span></div>
+        <div class="ls-tc-text">"${escHtml(h.thought)}"</div>
+        ${h.shift?`<div class="ls-tc-shift">↳ ${escHtml(h.shift)}</div>`:''}
+      </div>`;
+    }).filter(Boolean).join('');
+    return `<div class="ls-thoughts-list">${items}</div>`;
+  }
 
-    const W = canvas.width, H = canvas.height;
-    const ctx2 = canvas.getContext('2d');
-    ctx2.clearRect(0, 0, W, H);
+  function renderHistoryTab(state){
+    if(state.history.length<2) return `<div class="ls-empty">📈 Нужно минимум 2 анализа</div>`;
+    const checks=EMOTIONS.map(e=>`<label class="ls-hist-toggle"><input type="checkbox" class="ls-hist-check" data-eid="${e.id}" checked><span class="ls-hist-dot" style="background:${e.color}"></span><span>${e.icon} ${e.name}</span></label>`).join('');
+    return `<div class="ls-hist-legend">${checks}</div><div class="ls-hist-canvas-wrap"><canvas id="ls_hist_canvas"></canvas></div>`;
+  }
 
-    const pad = { t: 10, r: 10, b: 20, l: 28 };
-    const gW  = W - pad.l - pad.r;
-    const gH  = H - pad.t - pad.b;
-    const n   = state.history.length;
-
+  function drawHistoryChart(state){
+    const canvas=document.getElementById('ls_hist_canvas'); if(!canvas||state.history.length<2) return;
+    const wrap=canvas.parentElement, W=wrap.clientWidth||340, H=220;
+    canvas.width=W; canvas.height=H;
+    const c=canvas.getContext('2d'); c.clearRect(0,0,W,H);
+    const pad={top:10,right:15,bottom:30,left:30}, cW=W-pad.left-pad.right, cH=H-pad.top-pad.bottom;
+    const data=state.history, n=data.length;
     // Grid
-    ctx2.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx2.lineWidth   = 1;
-    for (let y = 0; y <= 4; y++) {
-      const yp = pad.t + gH - (y / 4) * gH;
-      ctx2.beginPath(); ctx2.moveTo(pad.l, yp); ctx2.lineTo(pad.l + gW, yp); ctx2.stroke();
-      ctx2.fillStyle = 'rgba(255,255,255,0.25)';
-      ctx2.font = '8px monospace';
-      ctx2.fillText(y * 25, 2, yp + 3);
+    c.strokeStyle='rgba(255,255,255,0.05)'; c.lineWidth=0.5;
+    [0,25,50,75,100].forEach(v=>{ const y=pad.top+cH-(v/100)*cH; c.beginPath(); c.moveTo(pad.left,y); c.lineTo(pad.left+cW,y); c.stroke(); c.fillStyle='rgba(255,255,255,0.18)'; c.font='9px monospace'; c.fillText(v,2,y+3); });
+    const enabled=new Set(); document.querySelectorAll('.ls-hist-check').forEach(cb=>{ if(cb.checked) enabled.add(cb.dataset.eid); });
+    for(const e of EMOTIONS){
+      if(!enabled.has(e.id)) continue;
+      c.beginPath(); c.strokeStyle=e.color; c.lineWidth=1.8; c.shadowColor=e.color; c.shadowBlur=4;
+      data.forEach((h,i)=>{ const x=pad.left+(i/(n-1))*cW, y=pad.top+cH-((h.emotions[e.id]||0)/100)*cH; i===0?c.moveTo(x,y):c.lineTo(x,y); });
+      c.stroke(); c.shadowBlur=0;
+      const lh=data[n-1], lx=pad.left+cW, ly=pad.top+cH-((lh.emotions[e.id]||0)/100)*cH;
+      c.beginPath(); c.arc(lx,ly,3,0,Math.PI*2); c.fillStyle=e.color; c.fill();
     }
-
-    // Lines per emotion
-    for (const k of EMOTION_KEYS) {
-      const emo = EMOTIONS[k];
-      const pts = state.history.map((h, i) => ({
-        x: pad.l + (i / Math.max(n - 1, 1)) * gW,
-        y: pad.t + gH - ((h.emotions[k] || 0) / 100) * gH,
-      }));
-
-      ctx2.beginPath();
-      ctx2.strokeStyle = emo.color;
-      ctx2.lineWidth   = 1.5;
-      ctx2.globalAlpha = 0.75;
-      pts.forEach((p, i) => i === 0 ? ctx2.moveTo(p.x, p.y) : ctx2.lineTo(p.x, p.y));
-      ctx2.stroke();
-    }
-    ctx2.globalAlpha = 1;
+    document.querySelectorAll('.ls-hist-check').forEach(cb=>{ cb.addEventListener('change',()=>drawHistoryChart(state)); });
   }
 
-  // ── Triggers tab ──────────────────────────────────────────────────────────
+  function getSoulStateSync(eid){ return _cachedEmotions?.[eid]??emptyState().emotions[eid]; }
 
-  function renderTriggersTab(state) {
-    const rows = EMOTION_KEYS.map(k => {
-      const emo     = EMOTIONS[k];
-      const trigger = BEHAVIOR_TRIGGERS[k];
-      if (!trigger) return '';
-      const active  = (state.emotions[k] || 0) >= trigger.threshold;
-      const pct     = Math.min(100, Math.round(((state.emotions[k] || 0) / trigger.threshold) * 100));
-      return `
-        <div class="lsl-trigger-row ${active ? 'lsl-trigger-active' : ''}">
-          <div class="lsl-trigger-top">
-            <span class="lsl-trigger-icon">${emo.icon}</span>
-            <span class="lsl-trigger-name">${emo.label}</span>
-            <span class="lsl-trigger-threshold">порог: ${trigger.threshold}</span>
-            <span class="lsl-trigger-cur" style="color:${emo.color}">${state.emotions[k] || 0}</span>
-            ${active ? '<span class="lsl-trigger-fire">🔥 АКТИВЕН</span>' : ''}
-          </div>
-          <div class="lsl-trigger-progress">
-            <div class="lsl-trigger-prog-fill" style="width:${pct}%;background:${emo.color};${active ? `box-shadow:0 0 8px ${emo.color}` : ''}"></div>
-          </div>
-          <div class="lsl-trigger-desc">${escHtml(trigger.prompt.slice(0, 100))}…</div>
-        </div>`;
-    }).join('');
-
-    const activeCount = EMOTION_KEYS.filter(k => BEHAVIOR_TRIGGERS[k] && (state.emotions[k]||0) >= BEHAVIOR_TRIGGERS[k].threshold).length;
-
-    return `
-      <div class="lsl-triggers-wrap">
-        <div class="lsl-triggers-header">
-          ⚡ Поведенческие триггеры
-          <span class="lsl-triggers-active-count ${activeCount > 0 ? 'lsl-tc-on' : ''}">${activeCount} активных</span>
-        </div>
-        <div class="lsl-triggers-info">
-          Когда эмоция достигает порога — {{char}} получает скрытую инструкцию о поведении в следующем ответе.
-        </div>
-        ${rows}
-      </div>`;
+  function renderSettingsTab(){
+    const s=getSettings();
+    return `<div class="ls-settings">
+      <div class="ls-sg"><div class="ls-sg-title">Основное</div>
+        <label class="ls-tr"><span>Расширение включено</span><input type="checkbox" id="ls_s_enabled" ${s.enabled?'checked':''}></label>
+        <label class="ls-tr"><span>Показывать кнопку</span><input type="checkbox" id="ls_s_showfab" ${s.showFab?'checked':''}></label>
+      </div>
+      <div class="ls-sg"><div class="ls-sg-title">Анализ</div>
+        <label class="ls-tr"><span>AI анализ (Anthropic API)</span><input type="checkbox" id="ls_s_api" ${s.apiEnabled?'checked':''}></label>
+        <label class="ls-tr"><span>Всплывающие мысли</span><input type="checkbox" id="ls_s_bubble" ${s.showThoughtBubble?'checked':''}></label>
+        <label class="ls-tr"><span>Затухание эмоций</span><input type="checkbox" id="ls_s_decay" ${s.decayEnabled?'checked':''}></label>
+      </div>
+      <div class="ls-sg"><div class="ls-sg-title">Триггеры поведения</div>
+        <label class="ls-tr"><span>Триггеры включены</span><input type="checkbox" id="ls_s_triggers" ${s.triggersEnabled?'checked':''}></label>
+        <div class="ls-triggers-list">${TRIGGERS.map(t=>{ const e=EMOTION_MAP[t.emotion]; const act=activeTriggerIds.has(t.id); return `<div class="ls-trig-row${act?' ls-trig-on':''}"><span style="color:${e?.color}">${t.name}</span><span class="ls-trig-cond">${e?.name||''} ${t.dir==='above'?'≥':'≤'} ${t.threshold}</span>${act?'<span class="ls-trig-live">АКТИВЕН</span>':''}</div>`; }).join('')}</div>
+      </div>
+      <div class="ls-sg"><div class="ls-sg-title">Ручная настройка</div>
+        ${EMOTIONS.map(e=>`<div class="ls-manual-row"><span>${e.icon}</span><span class="ls-manual-name">${e.name}</span><input type="range" class="ls-slider" id="ls_sl_${e.id}" min="0" max="100" value="${getSoulStateSync(e.id)}" style="--sc:${e.color}"><span class="ls-slval" id="ls_sv_${e.id}">${getSoulStateSync(e.id)}</span></div>`).join('')}
+        <button class="ls-btn ls-btn-primary" id="ls_apply_manual" type="button" style="margin-top:10px">✓ Применить</button>
+      </div>
+    </div>`;
   }
 
-  // ── Settings panel ────────────────────────────────────────────────────────
-
-  async function mountSettingsUi() {
-    if (document.getElementById('lsl_settings_block')) return;
-    const target = $('#extensions_settings2').length ? '#extensions_settings2' : '#extensions_settings';
-    if (!$(target).length) return;
-
-    const s = getSettings();
-    const secState = (() => { try { return JSON.parse(localStorage.getItem('lsl_sec')||'{}'); } catch { return {}; } })();
-    const saveSec  = () => { try { localStorage.setItem('lsl_sec', JSON.stringify(secState)); } catch {} };
-
-    const sec = (id, icon, title, content, defOpen = false) => {
-      const open = secState[id] !== undefined ? secState[id] : defOpen;
-      return `
-        <div class="lsl-sec" id="lsl_sec_${id}">
-          <div class="lsl-sec-hdr" data-sec="${id}">
-            <span class="lsl-sec-chev">${open?'▾':'▸'}</span>${icon} ${title}
-          </div>
-          <div class="lsl-sec-body"${open?'':' style="display:none"'}>${content}</div>
-        </div>`;
-    };
-
-    const secMain = `
-      <div class="lsl-2col">
-        <label class="lsl-ck"><input type="checkbox" id="lsl_enabled" ${s.enabled?'checked':''}><span>Активно</span></label>
-        <label class="lsl-ck"><input type="checkbox" id="lsl_show_fab" ${s.showFab?'checked':''}><span>Виджет 🧠</span></label>
-        <label class="lsl-ck"><input type="checkbox" id="lsl_auto_analyze" ${s.autoAnalyze?'checked':''}><span>Авто-анализ</span></label>
-        <label class="lsl-ck"><input type="checkbox" id="lsl_inject_beh" ${s.injectBehavior?'checked':''}><span>Триггеры поведения</span></label>
-        <label class="lsl-ck"><input type="checkbox" id="lsl_inner_thought" ${s.showInnerThought?'checked':''}><span>Тайные мысли</span></label>
-      </div>
-      <div class="lsl-srow lsl-slider-row">
-        <label>Анализ каждые:</label>
-        <input type="range" id="lsl_every" min="1" max="10" step="1" value="${s.analyzeEvery||1}">
-        <span id="lsl_every_val">${s.analyzeEvery||1}</span><span style="opacity:.45;font-size:10px">сообщ.</span>
-      </div>
-      <div class="lsl-srow lsl-slider-row">
-        <label>Глубина скана:</label>
-        <input type="range" id="lsl_depth" min="3" max="20" step="1" value="${s.scanDepth||8}">
-        <span id="lsl_depth_val">${s.scanDepth||8}</span><span style="opacity:.45;font-size:10px">сообщ.</span>
-      </div>
-      <div class="lsl-srow lsl-slider-row">
-        <label>Размер кнопки:</label>
-        <input type="range" id="lsl_scale" min="0.5" max="1.5" step="0.1" value="${s.fabScale??0.9}">
-        <span id="lsl_scale_val">${Math.round((s.fabScale??0.9)*100)}%</span>
-      </div>
-      <div class="lsl-compact-btns">
-        <button class="menu_button" id="lsl_open_panel_btn">🧠 Открыть панель</button>
-        <button class="menu_button" id="lsl_analyze_now_btn">⟳ Анализировать</button>
-        <button class="menu_button" id="lsl_reset_btn">🗑 Сбросить эмоции</button>
-      </div>`;
-
-    const hasApi = !!(s.apiEndpoint || '').trim();
-    const secApi = `
-      <div class="lsl-api-mode-bar">
-        <button class="lsl-api-btn ${!hasApi?'lsl-api-active':''}" data-mode="st">🟢 ST (текущий)</button>
-        <button class="lsl-api-btn ${hasApi?'lsl-api-active':''}" data-mode="custom">🔌 Кастомный API</button>
-      </div>
-      <div id="lsl_mode_st" ${hasApi?'style="display:none"':''}>
-        <div class="lsl-api-st-info">✅ Используется модель подключённая в ST. Всё работает из коробки.</div>
-      </div>
-      <div id="lsl_mode_custom" ${!hasApi?'style="display:none"':''}>
-        <input type="text" id="lsl_api_ep" class="lsl-api-field" placeholder="https://api.openai.com/v1" value="${escHtml(s.apiEndpoint||'')}">
-        <input type="password" id="lsl_api_key" class="lsl-api-field" placeholder="API Key" value="${s.apiKey||''}" style="margin-top:4px">
-        <input type="text" id="lsl_api_model" class="lsl-api-field" placeholder="gpt-4o-mini" value="${escHtml(s.apiModel||'gpt-4o-mini')}" style="margin-top:4px">
-      </div>`;
-
-    $(target).append(`
-      <div class="lsl-settings-block" id="lsl_settings_block">
-        <div class="lsl-settings-title">
-          <span>🧠 Living Soul</span>
-          <button type="button" id="lsl_collapse_btn">${s.collapsed?'▸':'▾'}</button>
-        </div>
-        <div class="lsl-settings-body"${s.collapsed?' style="display:none"':''}>
-          ${sec('main', '⚙️', 'Основное', secMain, true)}
-          ${sec('api',  '🔌', 'API',      secApi,  false)}
-        </div>
-      </div>
-    `);
-
-    // Accordion
-    $(document).off('click.lsl_sec').on('click.lsl_sec', '.lsl-sec-hdr', function () {
-      const id = this.getAttribute('data-sec');
-      const body = $(this).next('.lsl-sec-body');
-      const open = body.is(':visible');
-      body.toggle(!open);
-      $(this).find('.lsl-sec-chev').text(open?'▸':'▾');
-      secState[id] = !open; saveSec();
+  function bindSettingsEvents(){
+    getSoulState().then(state=>{
+      _cachedEmotions=state.emotions;
+      EMOTIONS.forEach(e=>{ const sl=document.getElementById(`ls_sl_${e.id}`), vl=document.getElementById(`ls_sv_${e.id}`); if(sl) sl.value=state.emotions[e.id]||0; if(vl) vl.textContent=state.emotions[e.id]||0; sl?.addEventListener('input',()=>{ if(vl) vl.textContent=sl.value; }); });
     });
-
-    $('#lsl_collapse_btn').on('click', () => {
-      s.collapsed = !s.collapsed;
-      $('#lsl_settings_block .lsl-settings-body').toggle(!s.collapsed);
-      $('#lsl_collapse_btn').text(s.collapsed?'▸':'▾');
-      ctx().saveSettingsDebounced();
-    });
-
-    // Checkboxes
-    $('#lsl_enabled').on('input',       ev => { s.enabled          = $(ev.currentTarget).prop('checked'); ctx().saveSettingsDebounced(); });
-    $('#lsl_show_fab').on('input', async ev => { s.showFab         = $(ev.currentTarget).prop('checked'); ctx().saveSettingsDebounced(); document.getElementById('lsl_fab').style.display = s.showFab ? '' : 'none'; });
-    $('#lsl_auto_analyze').on('input',  ev => { s.autoAnalyze      = $(ev.currentTarget).prop('checked'); ctx().saveSettingsDebounced(); });
-    $('#lsl_inject_beh').on('input',    ev => { s.injectBehavior   = $(ev.currentTarget).prop('checked'); ctx().saveSettingsDebounced(); });
-    $('#lsl_inner_thought').on('input', ev => { s.showInnerThought = $(ev.currentTarget).prop('checked'); ctx().saveSettingsDebounced(); });
-
-    $('#lsl_every').on('input',  ev => { const v=+$(ev.currentTarget).val(); s.analyzeEvery=v; $('#lsl_every_val').text(v); ctx().saveSettingsDebounced(); });
-    $('#lsl_depth').on('input',  ev => { const v=+$(ev.currentTarget).val(); s.scanDepth=v;    $('#lsl_depth_val').text(v); ctx().saveSettingsDebounced(); });
-    $('#lsl_scale').on('input',  ev => {
-      const v=parseFloat($(ev.currentTarget).val()); s.fabScale=v;
-      $('#lsl_scale_val').text(Math.round(v*100)+'%');
-      ctx().saveSettingsDebounced(); applyFabScale(); applyFabPos();
-    });
-
-    $(document).off('click.lsl_apimode').on('click.lsl_apimode', '.lsl-api-btn', function () {
-      const mode = this.getAttribute('data-mode');
-      document.querySelectorAll('.lsl-api-btn').forEach(b => b.classList.remove('lsl-api-active'));
-      this.classList.add('lsl-api-active');
-      if (mode === 'st') {
-        $('#lsl_mode_st').show(); $('#lsl_mode_custom').hide();
-        s.apiEndpoint = ''; s.apiKey = ''; ctx().saveSettingsDebounced();
-      } else {
-        $('#lsl_mode_st').hide(); $('#lsl_mode_custom').show();
-      }
-    });
-
-    $('#lsl_api_ep').on('input',    () => { s.apiEndpoint = $('#lsl_api_ep').val().trim(); ctx().saveSettingsDebounced(); });
-    $('#lsl_api_key').on('input',   () => { s.apiKey      = $('#lsl_api_key').val().trim(); ctx().saveSettingsDebounced(); });
-    $('#lsl_api_model').on('input', () => { s.apiModel    = $('#lsl_api_model').val().trim(); ctx().saveSettingsDebounced(); });
-
-    $('#lsl_open_panel_btn').on('click',  () => togglePanel());
-    $('#lsl_analyze_now_btn').on('click', async () => { await runAnalysis(); });
-    $('#lsl_reset_btn').on('click', async () => {
-      const state = await getState(true);
-      state.emotions  = emptyEmotions();
-      state.history   = [];
-      state.thoughts  = [];
-      state.lastAnalyzed = 0;
-      await saveState();
-      const fab = document.getElementById('lsl_fab');
-      if (fab) {
-        const orb = document.getElementById('lsl_fab_orb');
-        const lbl = document.getElementById('lsl_fab_label');
-        if (orb) { orb.textContent = '🧠'; orb.style.filter = ''; }
-        if (lbl) lbl.textContent = 'душа';
-      }
-      if (panelOpen) await renderPanelContent();
-    });
+    const bind=(id,key)=>{ const el=document.getElementById(id); if(!el) return; el.addEventListener('change',()=>{ getSettings()[key]=el.checked; ctx().saveSettingsDebounced(); if(key==='enabled'||key==='showFab') renderFab(); }); };
+    bind('ls_s_enabled','enabled'); bind('ls_s_showfab','showFab'); bind('ls_s_api','apiEnabled'); bind('ls_s_bubble','showThoughtBubble'); bind('ls_s_decay','decayEnabled'); bind('ls_s_triggers','triggersEnabled');
+    document.getElementById('ls_apply_manual')?.addEventListener('click',async()=>{
+      const state=await getSoulState(true);
+      EMOTIONS.forEach(e=>{ const sl=document.getElementById(`ls_sl_${e.id}`); if(sl) state.emotions[e.id]=parseInt(sl.value,10); });
+      const fired=checkTriggers(state.emotions);
+      for(const tr of fired) showToast(`${tr.name} активирован!`,'trigger',4000);
+      await updateTriggerPrompt(); await saveState(); await updateSoulPrompt(); updateFabDisplay(state);
+      showToast('✅ Эмоции обновлены','success');
+    },true);
   }
 
-  // ── Event wiring ──────────────────────────────────────────────────────────
-
-  function wireChatEvents() {
-    const { eventSource, event_types } = ctx();
-
-    eventSource.on(event_types.APP_READY, async () => {
-      ensureFab(); applyFabPos(); applyFabScale();
-      await mountSettingsUi();
-      const s = getSettings();
-      if (!s.enabled || !s.showFab) document.getElementById('lsl_fab').style.display = 'none';
-      const state = await getState();
-      updateFabDominant(state);
-    });
-
-    eventSource.on(event_types.CHAT_CHANGED, async () => {
-      msgCounter = 0;
-      behaviorActive = false;
-      try { ctx().setExtensionPrompt(BEHAVIOR_TAG, '', EXT_PROMPT_TYPES.IN_PROMPT, 0, true); } catch {}
-      const state = await getState();
-      updateFabDominant(state);
-      if (panelOpen) await renderPanelContent();
-    });
-
-    eventSource.on(event_types.MESSAGE_RECEIVED, async () => {
-      const s = getSettings();
-      if (!s.enabled) return;
-      msgCounter++;
-      if (s.autoAnalyze && msgCounter >= (s.analyzeEvery || 1)) {
-        msgCounter = 0;
-        await runAnalysis();
-      }
-    });
+  function mountSettingsUi(){
+    const target=document.getElementById('extensions_settings')||document.getElementById('extension_settings');
+    if(!target) return;
+    const html=`<div class="extension_block"><div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>🧠 Living Soul</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down"></div></div><div class="inline-drawer-content"><div style="padding:8px;display:flex;flex-direction:column;gap:6px"><label style="display:flex;justify-content:space-between;align-items:center;font-size:13px">Включён<input type="checkbox" id="ls_st_en"></label><label style="display:flex;justify-content:space-between;align-items:center;font-size:13px">Кнопка<input type="checkbox" id="ls_st_sf"></label><button id="ls_st_open" class="menu_button" style="margin-top:4px">Открыть Living Soul</button></div></div></div></div>`;
+    const w=document.createElement('div'); w.innerHTML=html; target.appendChild(w.firstChild);
+    const s=getSettings();
+    const en=document.getElementById('ls_st_en'); if(en){ en.checked=s.enabled; en.addEventListener('change',()=>{ getSettings().enabled=en.checked; ctx().saveSettingsDebounced(); renderFab(); }); }
+    const sf=document.getElementById('ls_st_sf'); if(sf){ sf.checked=s.showFab; sf.addEventListener('change',()=>{ getSettings().showFab=sf.checked; ctx().saveSettingsDebounced(); renderFab(); }); }
+    document.getElementById('ls_st_open')?.addEventListener('click',()=>togglePanel());
   }
 
-  // ── Boot ──────────────────────────────────────────────────────────────────
+  function wireChatEvents(){
+    const EV=SillyTavern.getContext().eventSource;
+    const EVENTS=SillyTavern.getContext().event_types;
+    EV.on(EVENTS.APP_READY,async()=>{ renderFab(); mountSettingsUi(); const state=await getSoulState(true); await updateSoulPrompt(); updateFabDisplay(state); });
+    EV.on(EVENTS.CHAT_CHANGED,async()=>{ activeTriggerIds.clear(); try{ ctx().setExtensionPrompt('LS_TRIGGER','',0,0,true); }catch{} if(panelOpen) await renderPanelContent(); const state=await getSoulState(true); updateFabDisplay(state); await updateSoulPrompt(); });
+    EV.on(EVENTS.MESSAGE_RECEIVED,async()=>{ await onMessageReceived(); });
+    window.addEventListener('resize',()=>{ if(panelOpen&&activeTab==='history') getSoulState().then(s=>drawHistoryChart(s)); });
+  }
 
-  jQuery(() => {
-    try {
-      wireChatEvents();
-      console.log('[LSL] Living Soul v1.0.0 загружен');
-    } catch (e) {
-      console.error('[LSL] init failed', e);
-    }
-  });
+  jQuery(()=>{ try{ wireChatEvents(); console.log('[LS] Living Soul v1.0.0 🧠'); }catch(e){ console.error('[LS] init failed',e); } });
 
 })();
