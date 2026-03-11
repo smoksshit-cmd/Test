@@ -2,13 +2,15 @@
   "display_name": "трп",
   "loading_order": 56,
   "js": [
-    "index.js"
+    "fmt-theme.js",
+    "index.js",
+    "fmt-theme-hooks.js"
   ],
   "css": [
     "style.css"
   ],
   "author": "Smokshi",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "auto_update": true,
   "homepage": "https://github.com/smoksshit-cmd/SillyTavern-FMT",
   "requires": []
