@@ -1,13 +1,14 @@
 {
-    "display_name": "Mommy Generation",
+    "display_name": "gen",
     "loading_order": 100,
     "requires": [],
     "optional": [],
     "js": "index.js",
     "css": "style.css",
-    "author": "local",
+    "author": "s",
     "version": "beta 1.1",
-    "homePage": "https://github.com/0xl0cal/sillyimages/",
+    "homePage": "https://github.com/s/sillyimages/",
     "auto_update": true
 }
+
 
