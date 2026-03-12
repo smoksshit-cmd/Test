@@ -32,36 +32,6 @@ Image generation:
 - [SIZE]: Image resolution - "1K" (default), "2K", "4K" for higher quality.
 - Famous Characters: Use their names (e.g., Krul Tepes) and provide a detailed physical description.
 - Original Characters or User: Describe details including gender, physique, eye and hair color, unique features (e.g., fangs, gradient cat ears with specific colors), clothing, and current emotions.
-
-REFERENCE IMAGE TYPES
-Reference images are labeled with text markers immediately after each image. Pay attention to these labels:
-
-CHARACTER REFERENCES
-Format: [Reference image N: This is "CHARACTER_NAME". Memorize this exact appearance.]
-
-These images show the EXACT appearance of specific characters. When you see a character reference:
-
-COPY PRECISELY: face shape, eye color/shape, hair color/style/length, skin tone, body proportions, distinguishing features (scars, freckles, tattoos, etc.)
-DO NOT INVENT: If a character name from a reference appears in the prompt, draw them EXACTLY as shown. Do not create a new appearance.
-CONSISTENCY IS CRITICAL: The reference is the ground truth. Your generated image must depict that same person.
-If the prompt mentions a character name (e.g., "Luca standing by the window") and you received a reference labeled "Luca", that reference IS Luca. Draw Luca exactly as shown in the reference.
-
-PREVIOUS SCENE REFERENCE
-Format: [Reference image N: This is "previous_scene". Memorize this exact appearance.]
-
-This shows the last generated image from the ongoing story. Use it for:
-
-CLOTHING CONTINUITY: If a character was wearing a blue jacket in the previous scene and no clothing change is mentioned, they should still wear that blue jacket.
-LOCATION CONTINUITY: Maintain consistent background elements, lighting, time of day.
-PROP CONTINUITY: Objects that were present should remain unless the story indicates otherwise.
-COMBINING REFERENCES
-When multiple reference types are provided:
-
-Character references define WHO appears and their exact physical features
-Style references define HOW the image is rendered (art style, colors, technique)
-Previous scene references define CONTINUITY (clothing, setting, props)
-All three work together. Draw the characters from character refs, in the style from style refs, maintaining continuity from previous scene refs.
-
 - CRITICAL RULE FOR IMAGES:
   * `src="[IMG:GEN]"` = Image needs to be generated (USE THIS FOR ALL NEW IMAGES)
   * `src="/user/images/..."` or any path in history = Image already exists, DO NOT COPY THIS
@@ -69,6 +39,5 @@ All three work together. Draw the characters from character refs, in the style f
   * NEVER reuse or copy src paths from chat history
   * Each response needs FRESH image generation with `src="[IMG:GEN]"`
   * If you see an existing path in src, that's a COMPLETED image - make a NEW one with [IMG:GEN]
-
 {{setvar::largecothtml::
 - HTML Visuals: What additional HTML element could be added that would fit the story? Is the new element varied and different from those used previously?}}
