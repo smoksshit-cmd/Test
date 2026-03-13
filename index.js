@@ -1492,15 +1492,19 @@ function createLoadingPlaceholder(tagId) {
 const ERROR_IMAGE_PATH = '/scripts/extensions/third-party/sillyimages/error.svg';
 
 /**
- * Create error placeholder element - just shows error.svg, no click handlers
+ * Create error placeholder element - shows error.svg inside a styled wrapper
  * User uses the regenerate button in message menu to retry
  */
 function createErrorPlaceholder(tagId, errorMessage, tagInfo) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'iig-error-wrapper';
+    wrapper.dataset.tagId = tagId;
+    wrapper.title = `Ошибка генерации: ${errorMessage}\nИспользуйте кнопку регенерации (🖼️) для повтора`;
+    
     const img = document.createElement('img');
     img.className = 'iig-error-image';
     img.src = ERROR_IMAGE_PATH;
     img.alt = 'Ошибка генерации';
-    img.title = `Ошибка: ${errorMessage}`;
     img.dataset.tagId = tagId;
     
     // Preserve data-iig-instruction for regenerate button functionality
@@ -1511,7 +1515,8 @@ function createErrorPlaceholder(tagId, errorMessage, tagInfo) {
         }
     }
     
-    return img;
+    wrapper.appendChild(img);
+    return wrapper;
 }
 
 /**
@@ -1692,16 +1697,18 @@ async function processMessageTags(messageId) {
         }
         
         // Replace target with placeholder, preserving parent styling context
-        if (targetElement) {
+        // If target is inside an error wrapper, replace the wrapper
+        const replaceTarget = targetElement?.closest('.iig-error-wrapper') || targetElement;
+        if (replaceTarget) {
             // Copy some styling context from parent for adaptive placeholder
-            const parent = targetElement.parentElement;
+            const parent = replaceTarget.parentElement;
             if (parent) {
                 const parentStyle = window.getComputedStyle(parent);
                 if (parentStyle.display === 'flex' || parentStyle.display === 'grid') {
                     loadingPlaceholder.style.alignSelf = 'center';
                 }
             }
-            targetElement.replaceWith(loadingPlaceholder);
+            replaceTarget.replaceWith(loadingPlaceholder);
             iigLog('INFO', `Loading placeholder shown (replaced target element)`);
         } else {
             iigLog('WARN', `Could not find target element, appending placeholder as fallback`);
@@ -1857,13 +1864,21 @@ async function regenerateMessageImages(messageId) {
         
         try {
             // Find the existing img element with data-iig-instruction
-            const existingImg = mesTextEl.querySelector(`img[data-iig-instruction]`);
-            if (existingImg) {
+            // Could be a plain img or inside an .iig-error-wrapper
+            let existingImg = mesTextEl.querySelector(`img[data-iig-instruction]`);
+            // Also look inside error wrappers (img may be nested)
+            if (!existingImg) {
+                const errorWrapper = mesTextEl.querySelector('.iig-error-wrapper');
+                if (errorWrapper) existingImg = errorWrapper.querySelector('img');
+            }
+            const existingTarget = existingImg?.closest('.iig-error-wrapper') || existingImg;
+            
+            if (existingTarget) {
                 // Preserve the instruction for future regenerations
                 const instruction = existingImg.getAttribute('data-iig-instruction');
                 
                 const loadingPlaceholder = createLoadingPlaceholder(tagId);
-                existingImg.replaceWith(loadingPlaceholder);
+                existingTarget.replaceWith(loadingPlaceholder);
                 
                 const statusEl = loadingPlaceholder.querySelector('.iig-status');
                 
@@ -1979,6 +1994,24 @@ async function onMessageReceived(messageId) {
     addRegenerateButton(messageElement, messageId);
     
     await processMessageTags(messageId);
+}
+
+/**
+ * Update the char avatar preview thumbnail in settings UI
+ */
+function updateCharAvatarPreview() {
+    try {
+        const charPreview = document.getElementById('iig_char_avatar_preview_inline');
+        if (!charPreview) return;
+        const ctx = SillyTavern.getContext();
+        const character = ctx.characters?.[ctx.characterId];
+        if (character?.avatar) {
+            const avatarUrl = `/characters/${encodeURIComponent(character.avatar)}`;
+            charPreview.innerHTML = `<img src="${avatarUrl}" alt="${character.name || 'char'}" onerror="this.parentElement.innerHTML='<i class=\\'fa-solid fa-image-portrait\\'></i>'">`;
+        } else {
+            charPreview.innerHTML = '<i class="fa-solid fa-image-portrait"></i>';
+        }
+    } catch(e) { /* ignore */ }
 }
 
 /**
