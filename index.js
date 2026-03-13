@@ -45,8 +45,25 @@ function exportLogs() {
     toastr.success('Логи экспортированы', 'Генерация картинок');
 }
 
-// Default settings
-const defaultSettings = Object.freeze({
+/**
+ * Update the char avatar preview thumbnail in settings UI
+ */
+function updateCharAvatarPreview() {
+    try {
+        const context = SillyTavern.getContext();
+        const charPreview = document.getElementById('iig_char_avatar_preview_inline');
+        if (!charPreview) return;
+        const character = context.characters?.[context.characterId];
+        if (character?.avatar) {
+            const avatarUrl = `/characters/${encodeURIComponent(character.avatar)}`;
+            charPreview.innerHTML = `<img src="${avatarUrl}" alt="${character.name || 'char'}" onerror="this.parentElement.innerHTML='<i class=\\'fa-solid fa-image-portrait\\'></i>'">`;
+        } else {
+            charPreview.innerHTML = '<i class="fa-solid fa-image-portrait"></i>';
+        }
+    } catch(e) { /* ignore */ }
+}
+
+ = Object.freeze({
     enabled: true,
     apiType: 'openai', // 'openai' or 'gemini'
     endpoint: '',
@@ -149,8 +166,16 @@ function getSettings() {
             name: old.name || '',
             charAvatar: old.source !== 'upload' ? (old.file || '') : '',
             uploadData: old.source === 'upload' ? (old.data || '') : '',
-            uploadThumb: old.source === 'upload' ? (old.thumb || '') : ''
+            uploadThumb: old.source === 'upload' ? (old.thumb || '') : '',
+            enabled: true
         }));
+    }
+    
+    // Ensure all NPC references have the 'enabled' field
+    if (s.npcReferences) {
+        for (const npc of s.npcReferences) {
+            if (npc.enabled === undefined) npc.enabled = true;
+        }
     }
     
     return context.extensionSettings[MODULE_NAME];
@@ -697,7 +722,7 @@ async function getLastGeneratedImageBase64(currentMessageId = null) {
             
             // Look for our generated images (they have paths like /user/images/...)
             const imgMatch = mes.match(/src=["']?(\/user\/images\/[^"'\s>]+)/i);
-            if (imgMatch) {
+            if (imgMatch && !imgMatch[1].includes('error.svg')) {
                 const imagePath = imgMatch[1];
                 console.log('[IIG] Found previous generated image:', imagePath);
                 
@@ -915,7 +940,7 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
     if (referenceImages.length > 0) {
         const settings = getSettings();
         const hasStyleRef = !!settings.styleReferenceImage;
-        const hasNpcRefs = settings.npcReferences && settings.npcReferences.some(n => n.charAvatar || n.uploadData);
+        const hasNpcRefs = settings.npcReferences && settings.npcReferences.some(n => (n.charAvatar || n.uploadData) && n.enabled !== false);
         
         // Build detailed reference mapping so the model knows which image is which
         let refParts = [];
@@ -937,6 +962,7 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
         if (hasNpcRefs) {
             for (const npc of settings.npcReferences) {
                 if (!npc.charAvatar && !npc.uploadData) continue;
+                if (npc.enabled === false) continue;
                 if (npc.charAvatar) {
                     refParts.push(`Image ${imgIdx}: NPC "${npc.name}" character avatar`);
                     imgIdx++;
@@ -1095,10 +1121,14 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
         }
     }
     
-    // NPC reference avatars - send all that have images
+    // NPC reference avatars - send all that have images AND are enabled
     if (settings.npcReferences && settings.npcReferences.length > 0) {
         for (const npcRef of settings.npcReferences) {
             if (!npcRef.name || (!npcRef.charAvatar && !npcRef.uploadData)) continue;
+            if (npcRef.enabled === false) {
+                iigLog('INFO', `Skipping disabled NPC reference: "${npcRef.name}"`);
+                continue;
+            }
             
             iigLog('INFO', `Adding NPC reference: "${npcRef.name}" (charAvatar: ${!!npcRef.charAvatar}, uploadData: ${!!npcRef.uploadData}, uploadDataLen: ${npcRef.uploadData?.length || 0})`);
             const npcAvatar = await getNpcAvatarBase64(npcRef);
@@ -1284,11 +1314,16 @@ async function parseImageTags(text, options = {}) {
         const hasErrorImage = srcValue.includes('error.svg'); // Our error placeholder - NO auto-retry
         const hasPath = srcValue && srcValue.startsWith('/') && srcValue.length > 5;
         
-        // Skip error images - user must click to retry manually (prevents conflict on swipe)
+        // Skip error images - user must click regenerate button to retry (prevents conflict on swipe)
         if (hasErrorImage && !forceAll) {
-            iigLog('INFO', `Skipping error image (click to retry): ${srcValue.substring(0, 50)}`);
+            iigLog('INFO', `Skipping error image (use regenerate button): ${srcValue.substring(0, 50)}`);
             searchPos = imgEnd;
             continue;
+        }
+        
+        // When forceAll + error image: treat as needing generation (reset to [IMG:GEN] state)
+        if (hasErrorImage && forceAll) {
+            iigLog('INFO', `Force regenerating error image: ${srcValue.substring(0, 50)}`);
         }
         
         if (forceAll) {
@@ -2087,10 +2122,15 @@ function createSettingsUI() {
                     <h5>Референсы аватаров</h5>
                     <p class="hint">Отправлять аватарки для консистентности персонажей.</p>
                     
-                    <label class="checkbox_label">
-                        <input type="checkbox" id="iig_send_char_avatar" ${settings.sendCharAvatar ? 'checked' : ''}>
-                        <span>Отправлять аватар {{char}}</span>
-                    </label>
+                    <div class="flex-row" style="align-items:center; gap:8px;">
+                        <label class="checkbox_label" style="flex:1; margin:0;">
+                            <input type="checkbox" id="iig_send_char_avatar" ${settings.sendCharAvatar ? 'checked' : ''}>
+                            <span>Отправлять аватар {{char}}</span>
+                        </label>
+                        <div id="iig_char_avatar_preview_inline" class="iig-avatar-thumb-inline" title="Текущий аватар персонажа">
+                            <i class="fa-solid fa-image-portrait"></i>
+                        </div>
+                    </div>
                     
                     <label class="checkbox_label">
                         <input type="checkbox" id="iig_send_user_avatar" ${settings.sendUserAvatar ? 'checked' : ''}>
@@ -2249,8 +2289,11 @@ function rebuildNpcList() {
             <div class="iig-npc-thumb iig-npc-upload-thumb" title="Загруженный референс">
                 ${uploadThumbSrc ? `<img src="${uploadThumbSrc}" alt="${npc.name}">` : '<i class="fa-solid fa-user"></i>'}
             </div>
-            <span class="iig-npc-label">${npc.name || 'Без имени'}</span>
+            <span class="iig-npc-label" style="${npc.enabled === false ? 'opacity:0.4;text-decoration:line-through;' : ''}">${npc.name || 'Без имени'}</span>
             <div class="iig-npc-actions">
+                <div class="menu_button iig-npc-toggle" title="${npc.enabled === false ? 'Включить' : 'Отключить'}" style="color:${npc.enabled === false ? 'rgba(150,150,150,0.6)' : 'rgba(100,200,100,0.8)'}">
+                    <i class="fa-solid ${npc.enabled === false ? 'fa-toggle-off' : 'fa-toggle-on'}"></i>
+                </div>
                 <label class="menu_button iig-npc-upload-btn" title="Загрузить картинку">
                     <i class="fa-solid fa-upload"></i>
                     <input type="file" class="iig-npc-file-input" accept="image/*" style="display:none;">
@@ -2394,6 +2437,9 @@ function bindSettingsEvents() {
         settings.sendCharAvatar = e.target.checked;
         saveSettings();
     });
+    
+    // Populate char avatar preview on load
+    updateCharAvatarPreview();
     
     // Send user avatar
     document.getElementById('iig_send_user_avatar')?.addEventListener('change', (e) => {
@@ -2545,7 +2591,7 @@ function bindSettingsEvents() {
             nameInput?.focus();
             return;
         }
-        settings.npcReferences.push({ name: name, charAvatar: '', uploadData: '', uploadThumb: '' });
+        settings.npcReferences.push({ name: name, charAvatar: '', uploadData: '', uploadThumb: '', enabled: true });
         saveSettings();
         if (nameInput) nameInput.value = '';
         rebuildNpcList();
@@ -2566,6 +2612,14 @@ function bindSettingsEvents() {
         const idx = parseInt(entry.dataset.index);
         if (isNaN(idx) || !settings.npcReferences[idx]) return;
         const npc = settings.npcReferences[idx];
+        
+        // Toggle enabled/disabled
+        if (e.target.closest('.iig-npc-toggle')) {
+            npc.enabled = npc.enabled === false ? true : false;
+            saveSettings();
+            rebuildNpcList();
+            return;
+        }
         
         // Remove button
         if (e.target.closest('.iig-npc-remove')) {
@@ -2676,6 +2730,8 @@ function bindSettingsEvents() {
         // Small delay to ensure DOM is ready
         setTimeout(() => {
             addButtonsToExistingMessages();
+            // Refresh char avatar preview
+            updateCharAvatarPreview();
         }, 100);
     });
     
