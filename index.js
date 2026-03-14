@@ -4,7 +4,8 @@
  * Catches [IMG:GEN:{json}] tags in AI messages and generates images via configured API.
  * Supports OpenAI-compatible and Gemini-compatible (nano-banana) endpoints.
  *
- * v2.2: Clothing wardrobe, collapsible settings, NPC enable/disable
+ * v2.3: Wardrobe clothing descriptions (manual + AI-generated via vision model),
+ *        injection of clothing descriptions into text model prompt
  */
 
 const MODULE_NAME = 'inline_image_gen';
@@ -69,6 +70,13 @@ const defaultSettings = Object.freeze({
     activeWardrobeUser: null,
     // v2.2: Collapsible section states
     collapsedSections: {},
+    // v2.3: Wardrobe descriptions
+    wardrobeDescEndpoint: '',
+    wardrobeDescApiKey: '',
+    wardrobeDescModel: '',
+    injectWardrobeToChat: true,
+    wardrobeInjectionDepth: 1,
+    wardrobeDescPrompt: 'Describe this clothing outfit in detail for a character in a roleplay. Focus on: type of garment, color, material/texture, style, notable features, accessories. Be concise but thorough (2-4 sentences). Write in English.',
 });
 
 const IMAGE_MODEL_KEYWORDS = [
@@ -105,6 +113,13 @@ function getSettings() {
             context.extensionSettings[MODULE_NAME][key] = defaultSettings[key];
         }
     }
+    // v2.3: Migrate old wardrobe items without description
+    const items = context.extensionSettings[MODULE_NAME].wardrobeItems || [];
+    for (const item of items) {
+        if (!Object.hasOwn(item, 'description')) {
+            item.description = '';
+        }
+    }
     return context.extensionSettings[MODULE_NAME];
 }
 
@@ -132,6 +147,28 @@ async function fetchModels() {
         return (data.data || []).filter(m => isImageModel(m.id)).map(m => m.id);
     } catch (error) {
         toastr.error(`Ошибка загрузки моделей: ${error.message}`, 'Генерация картинок');
+        return [];
+    }
+}
+
+// v2.3: Fetch text/vision models for description generation
+async function fetchDescriptionModels() {
+    const settings = getSettings();
+    const endpoint = settings.wardrobeDescEndpoint || settings.endpoint;
+    const apiKey = settings.wardrobeDescApiKey || settings.apiKey;
+    if (!endpoint || !apiKey) return [];
+    const url = `${endpoint.replace(/\/$/, '')}/v1/models`;
+    try {
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        // Return non-image models (text/vision models)
+        return (data.data || []).filter(m => !isImageModel(m.id)).map(m => m.id);
+    } catch (error) {
+        toastr.error(`Ошибка загрузки текстовых моделей: ${error.message}`, 'Генерация картинок');
         return [];
     }
 }
@@ -294,6 +331,7 @@ function addWardrobeItem(name, imageData, target = 'char') {
         id: generateWardrobeId(),
         name: name || 'Outfit',
         imageData,
+        description: '', // v2.3: text description of the outfit
         target, // 'char' or 'user'
         createdAt: Date.now(),
     };
@@ -308,6 +346,7 @@ function removeWardrobeItem(itemId) {
     if (settings.activeWardrobeUser === itemId) settings.activeWardrobeUser = null;
     settings.wardrobeItems = settings.wardrobeItems.filter(w => w.id !== itemId);
     saveSettings();
+    updateWardrobeInjection(); // v2.3: update injection when item removed
 }
 
 function setActiveWardrobe(itemId, target) {
@@ -318,6 +357,7 @@ function setActiveWardrobe(itemId, target) {
         settings.activeWardrobeUser = settings.activeWardrobeUser === itemId ? null : itemId;
     }
     saveSettings();
+    updateWardrobeInjection(); // v2.3: update injection when active outfit changes
 }
 
 function getActiveWardrobeItem(target) {
@@ -325,6 +365,127 @@ function getActiveWardrobeItem(target) {
     const activeId = target === 'char' ? settings.activeWardrobeChar : settings.activeWardrobeUser;
     if (!activeId) return null;
     return settings.wardrobeItems.find(w => w.id === activeId) || null;
+}
+
+// v2.3: Update wardrobe item description
+function updateWardrobeItemDescription(itemId, description) {
+    const settings = getSettings();
+    const item = settings.wardrobeItems.find(w => w.id === itemId);
+    if (item) {
+        item.description = description;
+        saveSettings();
+        updateWardrobeInjection(); // update injection when description changes
+        iigLog('INFO', `Updated description for wardrobe item "${item.name}" (${itemId})`);
+    }
+}
+
+// ============================================================
+// v2.3: WARDROBE DESCRIPTION GENERATION (Vision API)
+// ============================================================
+
+async function generateWardrobeDescription(itemId) {
+    const settings = getSettings();
+    const item = settings.wardrobeItems.find(w => w.id === itemId);
+    if (!item?.imageData) throw new Error('Нет данных изображения для этого наряда');
+
+    const endpoint = settings.wardrobeDescEndpoint || settings.endpoint;
+    const apiKey = settings.wardrobeDescApiKey || settings.apiKey;
+    const model = settings.wardrobeDescModel;
+
+    if (!endpoint) throw new Error('Не настроен эндпоинт для генерации описаний');
+    if (!apiKey) throw new Error('Не настроен API ключ для генерации описаний');
+    if (!model) throw new Error('Не выбрана модель для генерации описаний');
+
+    const url = `${endpoint.replace(/\/$/, '')}/v1/chat/completions`;
+
+    const promptText = settings.wardrobeDescPrompt || defaultSettings.wardrobeDescPrompt;
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            model: model,
+            messages: [{
+                role: 'user',
+                content: [
+                    {
+                        type: 'image_url',
+                        image_url: {
+                            url: `data:image/png;base64,${item.imageData}`
+                        }
+                    },
+                    {
+                        type: 'text',
+                        text: promptText
+                    }
+                ]
+            }],
+            max_tokens: 500,
+            temperature: 0.3,
+        })
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        throw new Error(`API ошибка (${response.status}): ${errorText}`);
+    }
+
+    const result = await response.json();
+    const description = result.choices?.[0]?.message?.content?.trim();
+
+    if (!description) throw new Error('Модель вернула пустой ответ');
+
+    iigLog('INFO', `Generated description for "${item.name}": ${description.substring(0, 100)}...`);
+    return description;
+}
+
+// ============================================================
+// v2.3: WARDROBE INJECTION INTO TEXT MODEL
+// ============================================================
+
+function updateWardrobeInjection() {
+    try {
+        const context = SillyTavern.getContext();
+        const settings = getSettings();
+        const injectionKey = MODULE_NAME + '_wardrobe';
+
+        if (!settings.injectWardrobeToChat) {
+            if (typeof context.setExtensionPrompt === 'function') {
+                context.setExtensionPrompt(injectionKey, '', 0, 0);
+            }
+            return;
+        }
+
+        const parts = [];
+
+        const charItem = getActiveWardrobeItem('char');
+        if (charItem?.description) {
+            const charName = context.characters?.[context.characterId]?.name || 'Character';
+            parts.push(`[${charName} is currently wearing: ${charItem.description}]`);
+        }
+
+        const userItem = getActiveWardrobeItem('user');
+        if (userItem?.description) {
+            const userName = context.name1 || 'User';
+            parts.push(`[${userName} is currently wearing: ${userItem.description}]`);
+        }
+
+        const injectionText = parts.join('\n');
+        const depth = settings.wardrobeInjectionDepth || 1;
+
+        if (typeof context.setExtensionPrompt === 'function') {
+            // position: 1 = IN_PROMPT (after main prompt)
+            context.setExtensionPrompt(injectionKey, injectionText, 1, depth);
+            iigLog('INFO', `Wardrobe injection updated (${injectionText.length} chars, depth=${depth})`);
+        } else {
+            iigLog('WARN', 'setExtensionPrompt not available in this ST version');
+        }
+    } catch (error) {
+        iigLog('ERROR', 'Error updating wardrobe injection:', error);
+    }
 }
 
 // ============================================================
@@ -385,14 +546,18 @@ async function collectReferenceImages(prompt) {
         references.push({ base64: npc.avatarData, label: `Reference image of ${npc.name}`, name: npc.name });
     }
 
-    // Wardrobe clothing references
+    // Wardrobe clothing references (v2.3: enriched with description)
     const charWardrobeItem = getActiveWardrobeItem('char');
     if (charWardrobeItem?.imageData) {
         const context = SillyTavern.getContext();
         const charName = context.characters?.[context.characterId]?.name || 'Character';
+        let label = `Clothing reference for ${charName}: "${charWardrobeItem.name}". ${charName} MUST be wearing exactly this outfit.`;
+        if (charWardrobeItem.description) {
+            label += ` Outfit description: ${charWardrobeItem.description}`;
+        }
         references.push({
             base64: charWardrobeItem.imageData,
-            label: `Clothing reference for ${charName}: "${charWardrobeItem.name}". ${charName} MUST be wearing exactly this outfit.`,
+            label,
             name: `${charName}'s outfit`,
         });
     }
@@ -400,9 +565,13 @@ async function collectReferenceImages(prompt) {
     if (userWardrobeItem?.imageData) {
         const context = SillyTavern.getContext();
         const userName = context.name1 || 'User';
+        let label = `Clothing reference for ${userName}: "${userWardrobeItem.name}". ${userName} MUST be wearing exactly this outfit.`;
+        if (userWardrobeItem.description) {
+            label += ` Outfit description: ${userWardrobeItem.description}`;
+        }
         references.push({
             base64: userWardrobeItem.imageData,
-            label: `Clothing reference for ${userName}: "${userWardrobeItem.name}". ${userName} MUST be wearing exactly this outfit.`,
+            label,
             name: `${userName}'s outfit`,
         });
     }
@@ -651,16 +820,26 @@ function buildEnhancedPrompt(basePrompt, style, options = {}) {
         if (clothing) promptParts.push(`[Current Clothing: ${clothing}]`);
     }
 
-    // Wardrobe clothing instructions
+    // Wardrobe clothing instructions (v2.3: now includes text description)
     const charWardrobeItem = getActiveWardrobeItem('char');
     if (charWardrobeItem) {
         const charName = context.characters?.[context.characterId]?.name || 'Character';
-        promptParts.push(`[CLOTHING OVERRIDE for ${charName}: The character MUST be wearing the outfit shown in the clothing reference image "${charWardrobeItem.name}". Ignore any other clothing descriptions — use ONLY the referenced outfit.]`);
+        let wardrobeInstruction = `[CLOTHING OVERRIDE for ${charName}: The character MUST be wearing the outfit shown in the clothing reference image "${charWardrobeItem.name}". Ignore any other clothing descriptions — use ONLY the referenced outfit.`;
+        if (charWardrobeItem.description) {
+            wardrobeInstruction += ` Detailed outfit description: ${charWardrobeItem.description}`;
+        }
+        wardrobeInstruction += ']';
+        promptParts.push(wardrobeInstruction);
     }
     const userWardrobeItem = getActiveWardrobeItem('user');
     if (userWardrobeItem) {
         const userName = context.name1 || 'User';
-        promptParts.push(`[CLOTHING OVERRIDE for ${userName}: This person MUST be wearing the outfit shown in the clothing reference image "${userWardrobeItem.name}". Ignore any other clothing descriptions — use ONLY the referenced outfit.]`);
+        let wardrobeInstruction = `[CLOTHING OVERRIDE for ${userName}: This person MUST be wearing the outfit shown in the clothing reference image "${userWardrobeItem.name}". Ignore any other clothing descriptions — use ONLY the referenced outfit.`;
+        if (userWardrobeItem.description) {
+            wardrobeInstruction += ` Detailed outfit description: ${userWardrobeItem.description}`;
+        }
+        wardrobeInstruction += ']';
+        promptParts.push(wardrobeInstruction);
     }
 
     if (options._referenceLabels?.length > 0) {
@@ -819,7 +998,6 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
 // ============================================================
 // TAG PARSING
 // ============================================================
-
 async function checkFileExists(path) {
     try { return (await fetch(path, { method: 'HEAD' })).ok; } catch (e) { return false; }
 }
@@ -1234,6 +1412,7 @@ function renderWardrobeGrid(target) {
 
     if (items.length === 0) {
         container.innerHTML = `<div class="iig-wardrobe-empty">Нет одежды. Нажмите + чтобы добавить.</div>`;
+        renderWardrobeDescriptionPanel(target); // v2.3
         return;
     }
 
@@ -1243,6 +1422,7 @@ function renderWardrobeGrid(target) {
             <div class="iig-wardrobe-card-overlay">
                 <span class="iig-wardrobe-card-name" title="${item.name}">${item.name}</span>
                 <div class="iig-wardrobe-card-actions">
+                    ${item.description ? '<i class="fa-solid fa-file-lines iig-wardrobe-has-desc" title="Есть описание"></i>' : ''}
                     <i class="fa-solid fa-trash iig-wardrobe-delete" data-ward-del="${item.id}" title="Удалить"></i>
                 </div>
             </div>
@@ -1269,6 +1449,109 @@ function renderWardrobeGrid(target) {
             renderWardrobeGrid(target);
             toastr.info('Одежда удалена');
         });
+    });
+
+    // v2.3: Render description panel for active item
+    renderWardrobeDescriptionPanel(target);
+}
+
+// v2.3: Description panel for active wardrobe item
+function renderWardrobeDescriptionPanel(target) {
+    const panelId = `iig_wardrobe_desc_${target}`;
+    let panel = document.getElementById(panelId);
+
+    // Create panel container if it doesn't exist
+    if (!panel) {
+        const gridContainer = document.getElementById(target === 'char' ? 'iig_wardrobe_char' : 'iig_wardrobe_user');
+        if (!gridContainer) return;
+        panel = document.createElement('div');
+        panel.id = panelId;
+        panel.className = 'iig-wardrobe-desc-panel';
+        // Insert after the grid container
+        gridContainer.parentNode.insertBefore(panel, gridContainer.nextSibling);
+    }
+
+    const activeItem = getActiveWardrobeItem(target);
+
+    if (!activeItem) {
+        panel.innerHTML = '';
+        panel.style.display = 'none';
+        return;
+    }
+
+    panel.style.display = 'block';
+    panel.innerHTML = `
+        <div class="iig-wardrobe-desc-header">
+            <i class="fa-solid fa-shirt"></i>
+            <span>Описание: <b>${activeItem.name}</b></span>
+        </div>
+        <textarea class="text_pole iig-wardrobe-desc-textarea" rows="3"
+            placeholder="Введите описание одежды вручную или сгенерируйте через AI..."
+            data-ward-id="${activeItem.id}">${activeItem.description || ''}</textarea>
+        <div class="iig-wardrobe-desc-actions">
+            <div class="menu_button iig-wardrobe-desc-generate" data-ward-id="${activeItem.id}" title="Сгенерировать описание через Vision AI">
+                <i class="fa-solid fa-robot"></i> Сгенерировать
+            </div>
+            <div class="menu_button iig-wardrobe-desc-save" data-ward-id="${activeItem.id}" title="Сохранить описание">
+                <i class="fa-solid fa-floppy-disk"></i> Сохранить
+            </div>
+            <div class="menu_button iig-wardrobe-desc-clear" data-ward-id="${activeItem.id}" title="Очистить описание">
+                <i class="fa-solid fa-eraser"></i>
+            </div>
+        </div>
+        <div class="iig-wardrobe-desc-status" id="iig_wardrobe_desc_status_${target}" style="display:none;"></div>
+    `;
+
+    // Bind save on textarea blur
+    const textarea = panel.querySelector('.iig-wardrobe-desc-textarea');
+    textarea?.addEventListener('blur', () => {
+        const wardId = textarea.dataset.wardId;
+        updateWardrobeItemDescription(wardId, textarea.value);
+    });
+
+    // Save button
+    panel.querySelector('.iig-wardrobe-desc-save')?.addEventListener('click', () => {
+        const wardId = textarea.dataset.wardId;
+        updateWardrobeItemDescription(wardId, textarea.value);
+        toastr.success('Описание сохранено');
+        renderWardrobeGrid(target); // refresh card indicator
+    });
+
+    // Clear button
+    panel.querySelector('.iig-wardrobe-desc-clear')?.addEventListener('click', () => {
+        textarea.value = '';
+        const wardId = textarea.dataset.wardId;
+        updateWardrobeItemDescription(wardId, '');
+        toastr.info('Описание очищено');
+        renderWardrobeGrid(target);
+    });
+
+    // Generate button
+    panel.querySelector('.iig-wardrobe-desc-generate')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        const wardId = btn.dataset.wardId;
+        const statusEl = document.getElementById(`iig_wardrobe_desc_status_${target}`);
+
+        btn.classList.add('disabled');
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Генерация...';
+        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Отправка картинки vision-модели...'; }
+
+        try {
+            const description = await generateWardrobeDescription(wardId);
+            textarea.value = description;
+            updateWardrobeItemDescription(wardId, description);
+            if (statusEl) { statusEl.textContent = 'Описание сгенерировано!'; statusEl.className = 'iig-wardrobe-desc-status iig-desc-success'; }
+            toastr.success('Описание сгенерировано через AI');
+            renderWardrobeGrid(target);
+        } catch (error) {
+            iigLog('ERROR', 'Failed to generate wardrobe description:', error);
+            if (statusEl) { statusEl.textContent = `Ошибка: ${error.message}`; statusEl.className = 'iig-wardrobe-desc-status iig-desc-error'; }
+            toastr.error(`Ошибка генерации описания: ${error.message}`);
+        } finally {
+            btn.classList.remove('disabled');
+            btn.innerHTML = '<i class="fa-solid fa-robot"></i> Сгенерировать';
+            setTimeout(() => { if (statusEl) statusEl.style.display = 'none'; }, 5000);
+        }
     });
 }
 
@@ -1319,7 +1602,6 @@ function renderNpcList() {
         });
         npcEl.querySelector('.iig-npc-appearance').addEventListener('input', (e) => updateNpc(npc.id, { appearance: e.target.value }));
 
-        // Toggle NPC on/off
         npcEl.querySelector('.iig-npc-toggle').addEventListener('click', () => {
             toggleNpc(npc.id);
             renderNpcList();
@@ -1449,10 +1731,20 @@ function createSettingsUI() {
         </div>
     `;
 
+    // v2.3: Updated wardrobe section with description panel containers
     const wardrobeSectionContent = `
-        <p class="hint">Загрузите картинки с одеждой. Выбранная одежда будет отправлена как референс — модель оденет персонажа в неё.</p>
+        <p class="hint">Загрузите картинки с одеждой. Выбранная одежда будет отправлена как референс — модель оденет персонажа в неё. Добавьте текстовое описание (вручную или через AI), чтобы текстовая модель тоже знала об одежде.</p>
 
-        <h5 style="margin: 6px 0 4px;">Одежда персонажа</h5>
+        <label class="checkbox_label">
+            <input type="checkbox" id="iig_inject_wardrobe" ${settings.injectWardrobeToChat ? 'checked' : ''}>
+            <span>Инжектить описание одежды в промпт текстовой модели</span>
+        </label>
+        <div class="flex-row" style="margin-top: 5px;">
+            <label for="iig_wardrobe_injection_depth">Глубина инжекта</label>
+            <input type="number" id="iig_wardrobe_injection_depth" class="text_pole flex1" value="${settings.wardrobeInjectionDepth || 1}" min="0" max="10">
+        </div>
+
+        <h5 style="margin: 10px 0 4px;">Одежда персонажа</h5>
         <div id="iig_wardrobe_char" class="iig-wardrobe-grid"></div>
         <div class="iig-wardrobe-add-row">
             <input type="text" id="iig_wardrobe_char_name" class="text_pole flex1" placeholder="Название наряда">
@@ -1460,12 +1752,38 @@ function createSettingsUI() {
             <div id="iig_wardrobe_char_add" class="menu_button" title="Добавить одежду"><i class="fa-solid fa-plus"></i> Добавить</div>
         </div>
 
-        <h5 style="margin: 10px 0 4px;">Одежда юзера</h5>
+        <h5 style="margin: 14px 0 4px;">Одежда юзера</h5>
         <div id="iig_wardrobe_user" class="iig-wardrobe-grid"></div>
         <div class="iig-wardrobe-add-row">
             <input type="text" id="iig_wardrobe_user_name" class="text_pole flex1" placeholder="Название наряда">
             <input type="file" id="iig_wardrobe_user_file" accept="image/*" style="display:none;">
             <div id="iig_wardrobe_user_add" class="menu_button" title="Добавить одежду"><i class="fa-solid fa-plus"></i> Добавить</div>
+        </div>
+    `;
+
+    // v2.3: New section for description API settings
+    const wardrobeDescApiSectionContent = `
+        <p class="hint">Настройте текстовую/vision модель для автоматической генерации описаний одежды по картинке. Если эндпоинт и ключ не указаны, будут использованы основные настройки API (из секции "Настройки API").</p>
+
+        <div class="flex-row">
+            <label for="iig_wardrobe_desc_endpoint">Эндпоинт (Vision API)</label>
+            <input type="text" id="iig_wardrobe_desc_endpoint" class="text_pole flex1" value="${settings.wardrobeDescEndpoint || ''}" placeholder="https://api.example.com (пусто = основной)">
+        </div>
+        <div class="flex-row">
+            <label for="iig_wardrobe_desc_api_key">API ключ</label>
+            <input type="password" id="iig_wardrobe_desc_api_key" class="text_pole flex1" value="${settings.wardrobeDescApiKey || ''}">
+            <div id="iig_desc_key_toggle" class="menu_button iig-key-toggle" title="Показать/Скрыть"><i class="fa-solid fa-eye"></i></div>
+        </div>
+        <div class="flex-row">
+            <label for="iig_wardrobe_desc_model">Модель</label>
+            <select id="iig_wardrobe_desc_model" class="flex1">
+                ${settings.wardrobeDescModel ? `<option value="${settings.wardrobeDescModel}" selected>${settings.wardrobeDescModel}</option>` : '<option value="">-- Выберите --</option>'}
+            </select>
+            <div id="iig_refresh_desc_models" class="menu_button iig-refresh-btn" title="Обновить список моделей"><i class="fa-solid fa-sync"></i></div>
+        </div>
+        <div class="flex-col" style="margin-top: 8px;">
+            <label for="iig_wardrobe_desc_prompt">Промпт для генерации описания</label>
+            <textarea id="iig_wardrobe_desc_prompt" class="text_pole" rows="3" placeholder="Describe this clothing outfit...">${settings.wardrobeDescPrompt || defaultSettings.wardrobeDescPrompt}</textarea>
         </div>
     `;
 
@@ -1553,6 +1871,7 @@ function createSettingsUI() {
                     ${createCollapsibleSection('gen_params', '⚙️', 'Параметры генерации', genParamsSectionContent)}
                     ${createCollapsibleSection('references', '🖼️', 'Референсы аватарок', referencesSectionContent)}
                     ${createCollapsibleSection('wardrobe', '👗', 'Гардероб (одежда)', wardrobeSectionContent)}
+                    ${createCollapsibleSection('wardrobe_desc_api', '🤖', 'Описание одежды (Vision API)', wardrobeDescApiSectionContent)}
                     ${createCollapsibleSection('npcs', '🎭', 'NPC / Доп. персонажи', npcSectionContent)}
                     ${createCollapsibleSection('prompts', '✍️', 'Пользовательские промпты', promptsSectionContent)}
                     ${createCollapsibleSection('fixed_style', '🎨', 'Фиксированный стиль', styleSectionContent)}
@@ -1685,6 +2004,63 @@ function bindSettingsEvents() {
     document.getElementById('iig_detect_clothing')?.addEventListener('change', (e) => { settings.detectClothing = e.target.checked; saveSettings(); });
     document.getElementById('iig_clothing_depth')?.addEventListener('input', (e) => { settings.clothingSearchDepth = parseInt(e.target.value) || 5; saveSettings(); });
 
+    // v2.3: Wardrobe injection settings
+    document.getElementById('iig_inject_wardrobe')?.addEventListener('change', (e) => {
+        settings.injectWardrobeToChat = e.target.checked;
+        saveSettings();
+        updateWardrobeInjection();
+    });
+
+    document.getElementById('iig_wardrobe_injection_depth')?.addEventListener('input', (e) => {
+        settings.wardrobeInjectionDepth = parseInt(e.target.value) || 1;
+        saveSettings();
+        updateWardrobeInjection();
+    });
+
+    // v2.3: Wardrobe description API settings
+    document.getElementById('iig_wardrobe_desc_endpoint')?.addEventListener('input', (e) => {
+        settings.wardrobeDescEndpoint = e.target.value;
+        saveSettings();
+    });
+
+    document.getElementById('iig_wardrobe_desc_api_key')?.addEventListener('input', (e) => {
+        settings.wardrobeDescApiKey = e.target.value;
+        saveSettings();
+    });
+
+    document.getElementById('iig_desc_key_toggle')?.addEventListener('click', () => {
+        const input = document.getElementById('iig_wardrobe_desc_api_key');
+        const icon = document.querySelector('#iig_desc_key_toggle i');
+        if (input.type === 'password') { input.type = 'text'; icon.classList.replace('fa-eye', 'fa-eye-slash'); }
+        else { input.type = 'password'; icon.classList.replace('fa-eye-slash', 'fa-eye'); }
+    });
+
+    document.getElementById('iig_wardrobe_desc_model')?.addEventListener('change', (e) => {
+        settings.wardrobeDescModel = e.target.value;
+        saveSettings();
+    });
+
+    document.getElementById('iig_refresh_desc_models')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget; btn.classList.add('loading');
+        try {
+            const models = await fetchDescriptionModels();
+            const select = document.getElementById('iig_wardrobe_desc_model');
+            select.innerHTML = '<option value="">-- Выберите --</option>';
+            for (const m of models) {
+                const opt = document.createElement('option');
+                opt.value = m; opt.textContent = m; opt.selected = m === settings.wardrobeDescModel;
+                select.appendChild(opt);
+            }
+            toastr.success(`Найдено текстовых моделей: ${models.length}`);
+        } catch (err) { toastr.error('Ошибка загрузки моделей'); }
+        finally { btn.classList.remove('loading'); }
+    });
+
+    document.getElementById('iig_wardrobe_desc_prompt')?.addEventListener('input', (e) => {
+        settings.wardrobeDescPrompt = e.target.value;
+        saveSettings();
+    });
+
     // Wardrobe add buttons
     const bindWardrobeAdd = (target) => {
         const addBtn = document.getElementById(`iig_wardrobe_${target}_add`);
@@ -1723,13 +2099,15 @@ function bindSettingsEvents() {
     context.eventSource.on(context.event_types.APP_READY, () => {
         createSettingsUI();
         addButtonsToExistingMessages();
-        console.log('[IIG] Inline Image Generation v2.2 loaded');
+        updateWardrobeInjection(); // v2.3: initialize wardrobe injection on load
+        console.log('[IIG] Inline Image Generation v2.3 loaded');
     });
 
     context.eventSource.on(context.event_types.CHAT_CHANGED, () => {
         setTimeout(() => {
             addButtonsToExistingMessages();
             updateCharAvatarPreview();
+            updateWardrobeInjection(); // v2.3: re-inject on chat change
         }, 100);
     });
 
@@ -1737,5 +2115,5 @@ function bindSettingsEvents() {
         await onMessageReceived(messageId);
     });
 
-    console.log('[IIG] Inline Image Generation v2.2 initialized');
+    console.log('[IIG] Inline Image Generation v2.3 initialized');
 })();
