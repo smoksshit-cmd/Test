@@ -1,10 +1,10 @@
-/* Inline Image Generation Extension Styles */
+/* Inline Image Generation Extension Styles v2.2 */
 
 /* Settings Panel */
 .iig-settings {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
 }
 
 .iig-settings .flex-row {
@@ -21,36 +21,87 @@
     flex: 1;
 }
 
-.iig-settings hr {
-    margin: 10px 0;
-    border: none;
-    border-top: 1px solid var(--SmartThemeBorderColor);
-}
-
 .iig-settings h4 {
     margin: 5px 0;
+    color: var(--SmartThemeBodyColor);
+}
+
+.iig-settings h5 {
+    margin: 4px 0;
     color: var(--SmartThemeBodyColor);
 }
 
 .iig-settings .hint {
     font-size: 0.85em;
     color: var(--SmartThemeQuoteColor);
-    margin-top: 2px;
+    margin: 2px 0 4px 0;
 }
 
-/* Avatar options section */
-.iig-avatar-section {
-    padding: 10px;
+/* ============================================
+   COLLAPSIBLE SECTIONS
+   ============================================ */
+
+.iig-section {
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    overflow: hidden;
     background: var(--SmartThemeBlurTintColor);
-    border-radius: 5px;
-    margin-top: 5px;
 }
 
-.iig-avatar-section.hidden {
+.iig-section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+}
+
+.iig-section-header:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.iig-section-icon {
+    font-size: 1em;
+    flex-shrink: 0;
+    width: 20px;
+    text-align: center;
+}
+
+.iig-section-title {
+    flex: 1;
+    font-weight: 600;
+    font-size: 0.92em;
+    color: var(--SmartThemeBodyColor);
+}
+
+.iig-section-chevron {
+    font-size: 0.75em;
+    transition: transform 0.2s ease;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.iig-section-chevron.iig-collapsed {
+    transform: rotate(-90deg);
+}
+
+.iig-section-body {
+    padding: 8px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+.iig-section-body.iig-section-hidden {
     display: none;
 }
 
-/* Loading Placeholder */
+/* ============================================
+   LOADING PLACEHOLDER
+   ============================================ */
+
 .iig-loading-placeholder {
     display: inline-flex;
     flex-direction: column;
@@ -87,7 +138,10 @@
     to { transform: rotate(360deg); }
 }
 
-/* Error Wrapper */
+/* ============================================
+   ERROR IMAGE
+   ============================================ */
+
 .iig-error-wrapper {
     display: inline-block;
     position: relative;
@@ -136,266 +190,20 @@
     cursor: pointer;
 }
 
-/* Inline avatar thumb (next to checkbox/dropdown) */
-.iig-avatar-thumb-inline {
-    width: 36px;
-    height: 36px;
-    min-width: 36px;
-    min-height: 36px;
-    border-radius: 6px;
-    border: 1px solid var(--SmartThemeBorderColor);
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--SmartThemeBlurTintColor);
-    flex-shrink: 0;
-}
+/* ============================================
+   AVATAR PREVIEWS
+   ============================================ */
 
-.iig-avatar-thumb-inline img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-}
-
-.iig-avatar-thumb-inline i {
-    font-size: 1em;
-    opacity: 0.4;
-}
-
-/* Avatar Preview (style ref) */
-.iig-avatar-preview {
-    margin: 4px 0;
-}
-
-.iig-avatar-preview.hidden {
-    display: none;
-}
-
-.iig-avatar-preview img {
-    max-width: 80px;
-    max-height: 80px;
-    border-radius: 6px;
-    border: 1px solid var(--SmartThemeBorderColor);
-    object-fit: cover;
-}
-
-/* NPC References List */
-.iig-npc-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-/* NPC Entry Row */
-.iig-npc-entry {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    background: var(--SmartThemeBlurTintColor);
-    border-radius: 8px;
-    border: 1px solid var(--SmartThemeBorderColor);
-    min-height: 44px;
-    transition: opacity 0.2s;
-}
-
-/* NPC Thumbnail */
-.iig-npc-thumb {
-    width: 36px;
-    height: 36px;
-    min-width: 36px;
-    min-height: 36px;
-    border-radius: 6px;
-    border: 1px solid var(--SmartThemeBorderColor);
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--SmartThemeBlurTintColor);
-    flex-shrink: 0;
-}
-
-.iig-npc-thumb img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-}
-
-.iig-npc-thumb i {
-    font-size: 1em;
-    opacity: 0.4;
-}
-
-/* NPC Name Label */
-.iig-npc-label {
-    flex: 1;
-    font-size: 0.95em;
-    color: var(--SmartThemeBodyColor);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* NPC Status indicator */
-.iig-npc-status {
-    flex-shrink: 0;
-    font-weight: bold;
-    letter-spacing: 0.5px;
-}
-
-/* NPC Action Buttons */
-.iig-npc-actions {
-    display: flex;
-    gap: 4px;
-    flex-shrink: 0;
-}
-
-.iig-npc-actions .menu_button {
-    padding: 6px 8px;
-    cursor: pointer;
-    font-size: 0.9em;
-}
-
-.iig-npc-remove {
-    color: rgba(255, 100, 100, 0.7);
-}
-
-.iig-npc-remove:hover {
-    color: rgba(255, 100, 100, 1);
-}
-
-/* NPC Toggle button - larger hit area */
-.iig-npc-toggle {
-    transition: color 0.2s;
-    font-size: 1.1em !important;
-    padding: 4px 6px !important;
-}
-
-.iig-npc-toggle:hover {
-    opacity: 0.8;
-}
-
-/* NPC Add Row */
-.iig-npc-add-row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    margin-top: 6px;
-}
-
-.iig-npc-add-row .text_pole {
-    flex: 1;
-}
-
-/* Style Reference */
-.iig-style-ref-preview img {
-    max-width: 100px;
-    max-height: 100px;
-    border-radius: 6px;
-    border: 1px solid var(--SmartThemeBorderColor);
-}
-
-/* Hidden utility */
-.hidden {
-    display: none !important;
-}
-
-/* Gemini section */
-.iig-gemini-section.hidden {
-    display: none !important;
-}
-
-/* NPC Section */
-.iig-npc-item {
-    border: 1px solid var(--SmartThemeBorderColor);
-    border-radius: 8px;
-    padding: 10px;
-    margin-bottom: 8px;
-    background: var(--SmartThemeBlurTintColor);
-}
-
-.iig-npc-header {
-    display: flex;
-    gap: 10px;
-    align-items: flex-start;
-}
-
-.iig-npc-avatar-container {
-    position: relative;
-    flex-shrink: 0;
-    cursor: pointer;
-}
-
-.iig-npc-avatar-preview {
-    width: 64px;
-    height: 64px;
-    border-radius: 8px;
-    object-fit: cover;
-    border: 2px solid var(--SmartThemeBorderColor);
-}
-
-.iig-npc-no-avatar {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--SmartThemeBlurTintColor);
-    color: var(--SmartThemeBodyColor);
-    opacity: 0.5;
-    font-size: 1.5em;
-}
-
-.iig-npc-avatar-upload-btn {
-    position: absolute;
-    bottom: -4px;
-    right: -4px;
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.7em;
-    padding: 0;
-}
-
-.iig-npc-fields {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.iig-npc-fields .text_pole {
-    margin: 0;
-}
-
-.iig-npc-remove {
-    flex-shrink: 0;
-    color: var(--SmartThemeQuoteColor);
-}
-
-.iig-npc-remove:hover {
-    color: #ff4444;
-}
-
-.iig-npc-appearance {
-    margin-top: 6px;
-    width: 100%;
-}
-/* Avatar Preview in Settings */
 .iig-avatar-preview-container {
-    margin: 6px 0 10px 0;
+    margin: 4px 0 8px 0;
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
 .iig-avatar-preview-img {
-    width: 80px;
-    height: 80px;
+    width: 72px;
+    height: 72px;
     border-radius: 10px;
     object-fit: cover;
     border: 2px solid var(--SmartThemeBorderColor);
@@ -403,8 +211,8 @@
 }
 
 .iig-avatar-preview-empty {
-    width: 80px;
-    height: 80px;
+    width: 72px;
+    height: 72px;
     border-radius: 10px;
     border: 2px dashed var(--SmartThemeBorderColor);
     display: flex;
@@ -421,18 +229,26 @@
     font-size: 1.8em;
 }
 
-/* NPC Section */
+/* ============================================
+   NPC SECTION
+   ============================================ */
+
 .iig-npc-item {
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 8px;
-    padding: 10px;
-    margin-bottom: 8px;
+    padding: 8px;
+    margin-bottom: 6px;
     background: var(--SmartThemeBlurTintColor);
+    transition: opacity 0.2s;
+}
+
+.iig-npc-item.iig-npc-disabled {
+    opacity: 0.45;
 }
 
 .iig-npc-header {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     align-items: flex-start;
 }
 
@@ -443,8 +259,8 @@
 }
 
 .iig-npc-avatar-preview {
-    width: 64px;
-    height: 64px;
+    width: 56px;
+    height: 56px;
     border-radius: 8px;
     object-fit: cover;
     border: 2px solid var(--SmartThemeBorderColor);
@@ -464,13 +280,13 @@
     position: absolute;
     bottom: -4px;
     right: -4px;
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.7em;
+    font-size: 0.65em;
     padding: 0;
 }
 
@@ -478,16 +294,41 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
 }
 
 .iig-npc-fields .text_pole {
     margin: 0;
 }
 
+.iig-npc-btn-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.iig-npc-toggle {
+    cursor: pointer;
+    font-size: 1.2em;
+    padding: 2px 6px;
+    transition: color 0.2s;
+}
+
+.iig-npc-toggle.iig-npc-on {
+    color: #4caf50;
+}
+
+.iig-npc-toggle.iig-npc-off {
+    color: var(--SmartThemeQuoteColor);
+    opacity: 0.6;
+}
+
 .iig-npc-remove {
     flex-shrink: 0;
     color: var(--SmartThemeQuoteColor);
+    cursor: pointer;
+    padding: 2px 6px;
 }
 
 .iig-npc-remove:hover {
@@ -495,6 +336,129 @@
 }
 
 .iig-npc-appearance {
-    margin-top: 6px;
+    margin-top: 4px;
     width: 100%;
+}
+
+/* ============================================
+   WARDROBE (CLOTHING SYSTEM)
+   ============================================ */
+
+.iig-wardrobe-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+    gap: 6px;
+    margin: 4px 0;
+}
+
+.iig-wardrobe-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 12px;
+    color: var(--SmartThemeQuoteColor);
+    font-size: 0.85em;
+    opacity: 0.6;
+}
+
+.iig-wardrobe-card {
+    position: relative;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 2px solid var(--SmartThemeBorderColor);
+    cursor: pointer;
+    transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+    aspect-ratio: 1;
+}
+
+.iig-wardrobe-card:hover {
+    transform: scale(1.04);
+    border-color: var(--SmartThemeBodyColor);
+}
+
+.iig-wardrobe-card.iig-wardrobe-active {
+    border-color: #4caf50;
+    box-shadow: 0 0 8px rgba(76, 175, 80, 0.4);
+}
+
+.iig-wardrobe-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.iig-wardrobe-card-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+    padding: 16px 4px 3px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 2px;
+}
+
+.iig-wardrobe-card-name {
+    font-size: 0.7em;
+    color: #fff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.iig-wardrobe-card-actions {
+    flex-shrink: 0;
+}
+
+.iig-wardrobe-delete {
+    color: rgba(255, 100, 100, 0.8);
+    font-size: 0.7em;
+    cursor: pointer;
+    padding: 2px;
+    transition: color 0.15s;
+}
+
+.iig-wardrobe-delete:hover {
+    color: #ff4444;
+}
+
+.iig-wardrobe-check {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #4caf50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 0.65em;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.iig-wardrobe-add-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-top: 4px;
+}
+
+.iig-wardrobe-add-row .text_pole {
+    flex: 1;
+    margin: 0;
+}
+
+.iig-wardrobe-add-row .menu_button {
+    white-space: nowrap;
+}
+
+/* Hidden utility */
+.hidden {
+    display: none !important;
 }
